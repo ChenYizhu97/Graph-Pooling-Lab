@@ -11,6 +11,7 @@ def build_case_manifest(
     datasets: list[str],
     model_types: list[str],
     pool_ratio: float,
+    activation_checkpoint: bool = False,
     tag_prefix: Optional[str] = None,
     train_overrides: Optional[dict] = None,
     log_file: Optional[str] = None,
@@ -25,6 +26,7 @@ def build_case_manifest(
                 train_block = deepcopy(AUTOMATION_TRAIN_DEFAULTS)
                 if train_overrides:
                     train_block.update(deepcopy(train_overrides))
+                train_block["activation_checkpoint"] = activation_checkpoint
 
                 job = normalize_train_job(
                     {
@@ -42,6 +44,7 @@ def build_case_manifest(
                         "dataset": dataset,
                         "pool": pool,
                         "pool_ratio": pool_ratio,
+                        "activation_checkpoint": activation_checkpoint,
                         "model_type": model_type,
                         "job": job,
                     }

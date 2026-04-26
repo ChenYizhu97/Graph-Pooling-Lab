@@ -3,7 +3,7 @@ import shlex
 import typer
 from typing_extensions import Annotated, Optional
 
-from gplab.experiment.identity import compute_benchmark_key, ensure_record_id
+from gplab.experiment.identity import compute_benchmark_key, require_record_id
 from gplab.experiment.record import summarize_record
 from gplab.cli.output import build_error_payload, emit_json, validate_output_format
 from gplab.utils.jsonl import read_jsonl
@@ -33,7 +33,7 @@ def _print_report(records: list[dict], sort_by: str) -> None:
         tags = sorted({record.get("tag") for record in ranked if record.get("tag") is not None})
         header_parts = [
             f"dataset={spec['dataset']}",
-            f"model={spec['model'].get('variant', 'sum')}",
+            f"model={spec['model']['variant']}",
             f"benchmark={compute_benchmark_key(first)}",
         ]
         if len(tags) == 1:
@@ -81,7 +81,7 @@ def _build_report_payload(records: list[dict], sort_by: str) -> dict:
             {
                 "benchmark_key": benchmark_key,
                 "dataset": first["spec"]["dataset"],
-                "model_type": first["spec"]["model"].get("variant", "sum"),
+                "model_type": first["spec"]["model"]["variant"],
                 "records": group_summaries,
             }
         )
@@ -131,7 +131,7 @@ def main(
                 raise typer.BadParameter(str(exc), param_hint="--model-type") from exc
 
         records = []
-        for record in (ensure_record_id(record) for record in read_jsonl(log_file)):
+        for record in (require_record_id(record) for record in read_jsonl(log_file)):
             spec = record["spec"]
             if dataset is not None and spec["dataset"].lower() != dataset.lower():
                 continue
@@ -139,7 +139,7 @@ def main(
                 continue
             if tag is not None and record.get("tag") != tag:
                 continue
-            if model_type is not None and spec["model"].get("variant", "sum") != model_type:
+            if model_type is not None and spec["model"]["variant"] != model_type:
                 continue
             records.append(record)
 

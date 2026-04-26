@@ -20,3 +20,9 @@ BUILTIN_POOLS = (
     "diffpool",
     "densepool",
 )
+
+DENSE_POOLS = (
+    "mincutpool",
+    "diffpool",
+    "densepool",
+)

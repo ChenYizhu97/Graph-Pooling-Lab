@@ -20,5 +20,5 @@ AUTOMATION_TRAIN_DEFAULTS = {
     "seed_base": 20260320,
     "seed_list": None,
     "allow_duplicate_seeds": False,
+    "activation_checkpoint": False,
 }
-

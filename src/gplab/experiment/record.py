@@ -1,7 +1,7 @@
 from copy import deepcopy
 import numpy as np
 
-from gplab.experiment.identity import compute_benchmark_key, ensure_record_id
+from gplab.experiment.identity import attach_record_id, compute_benchmark_key, require_record_id
 
 
 def build_spec(conf: dict) -> dict:
@@ -17,13 +17,14 @@ def build_spec(conf: dict) -> dict:
         "pool": {
             "name": conf["pool"]["method"],
             "ratio": conf["pool"]["ratio"],
-            "source": conf["pool"].get("source", "builtin"),
+            "source": conf["pool"]["source"],
         },
         "train": {
             "lr": float(expr_conf["lr"]),
             "batch_size": int(expr_conf["batch_size"]),
             "patience": int(expr_conf["patience"]),
             "epochs": int(expr_conf["epochs"]),
+            "activation_checkpoint": bool(expr_conf["activation_checkpoint"]),
             "split": split,
             "seeds": [int(seed) for seed in expr_conf["seeds"]],
         },
@@ -60,12 +61,11 @@ def build_record(conf: dict, *, runtime: dict, run_records: list[dict]) -> dict:
     }
     if conf.get("tag") is not None:
         record["tag"] = conf["tag"]
-    ensure_record_id(record)
-    return record
+    return attach_record_id(record)
 
 
 def summarize_record(record: dict) -> dict:
-    ensured = ensure_record_id(record)
+    ensured = require_record_id(record)
     runs = ensured["result"]["runs"]
     test_acc = [float(run["best_test_acc"]) for run in runs]
     val_loss = [float(run["best_val_loss"]) for run in runs]
@@ -81,7 +81,8 @@ def summarize_record(record: dict) -> dict:
         "dataset": ensured["spec"]["dataset"],
         "pool": ensured["spec"]["pool"]["name"],
         "pool_ratio": ensured["spec"]["pool"]["ratio"],
-        "model_type": ensured["spec"]["model"].get("variant", "sum"),
+        "activation_checkpoint": bool(ensured["spec"]["train"]["activation_checkpoint"]),
+        "model_type": ensured["spec"]["model"]["variant"],
         "runs": len(runs),
         "mean": float(ensured["result"]["mean"]),
         "std": float(ensured["result"]["std"]),

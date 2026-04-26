@@ -23,7 +23,7 @@ from gplab.experiment.reproducibility import (
 
 
 def _build_model(conf: dict, dataset, avg_node_num: float, device: torch.device):
-    model_type = conf["model"].get("variant", "sum")
+    model_type = conf["model"]["variant"]
     model_class = GraphClassifierPlain if model_type == "plain" else GraphClassifierSum
     return model_class(
         dataset.num_node_features,
@@ -32,6 +32,7 @@ def _build_model(conf: dict, dataset, avg_node_num: float, device: torch.device)
         ratio=conf["pool"]["ratio"],
         config=conf["model"],
         avg_node_num=avg_node_num,
+        activation_checkpoint=conf["experiment"]["activation_checkpoint"],
     ).to(device)
 
 
@@ -117,7 +118,7 @@ def _execute_single_run(
     }
 
 
-def execute_request(conf: dict, *, emit_text: bool = True) -> dict:
+def run_experiment(conf: dict, *, emit_text: bool = True) -> dict:
     working_conf = deepcopy(conf)
     configure_runtime_threads()
     set_np_and_torch(0)

@@ -5,8 +5,7 @@ from typing_extensions import Annotated, Optional
 
 from gplab.cli.options import parse_csv_list, parse_seed_list
 from gplab.cli.output import build_error_payload, emit_json, validate_output_format
-from gplab.experiment.request import build_job_request
-from gplab.experiment.train_result import execute_train_request
+from gplab.experiment.train_result import execute_train_job
 from gplab.jobs import build_case_manifest
 
 app = typer.Typer(pretty_exceptions_enable=False)
@@ -18,6 +17,7 @@ def main(
     datasets: Annotated[str, typer.Option(help="Comma-separated datasets to validate.")] = "MUTAG,PROTEINS",
     model_type: Annotated[str, typer.Option(help="Model variant: sum or plain.")] = "sum",
     pool_ratio: Annotated[float, typer.Option(help="Pooling ratio for all cases.")] = 0.5,
+    activation_checkpoint: Annotated[bool, typer.Option(help="Use activation checkpointing to reduce GPU memory at extra compute cost.")] = False,
     runs: Annotated[int, typer.Option(help="Runs per smoke case.")] = 1,
     epochs: Annotated[int, typer.Option(help="Epochs per smoke case.")] = 1,
     patience: Annotated[int, typer.Option(help="Patience per smoke case.")] = 0,
@@ -57,6 +57,7 @@ def main(
             datasets=parse_csv_list(datasets),
             model_types=[model_type],
             pool_ratio=pool_ratio,
+            activation_checkpoint=activation_checkpoint,
             tag_prefix=tag_prefix,
             log_file=log_file,
             train_overrides=train_overrides,
@@ -68,9 +69,8 @@ def main(
             case_id = planned_case["case_id"]
             start = time.perf_counter()
             try:
-                request = build_job_request(planned_case["job"])
-                run_payload = execute_train_request(
-                    request,
+                run_payload = execute_train_job(
+                    planned_case["job"],
                     emit_text=False,
                     request_details={
                         "mode": "validation",
@@ -83,6 +83,7 @@ def main(
                     "pool": pool,
                     "dataset": dataset,
                     "model_type": model_type,
+                    "activation_checkpoint": activation_checkpoint,
                     "status": "ok",
                     "seconds": round(time.perf_counter() - start, 4),
                     "record_id": run_payload["summary"]["record_id"],
@@ -96,6 +97,7 @@ def main(
                     "pool": pool,
                     "dataset": dataset,
                     "model_type": model_type,
+                    "activation_checkpoint": activation_checkpoint,
                     "status": "failed",
                     "seconds": round(time.perf_counter() - start, 4),
                     "error_type": type(exc).__name__,

@@ -190,6 +190,23 @@ Built-in pooling methods:
 
 Sparse poolers work directly on sparse graph batches. Dense poolers are wrapped by `DensePoolAdapter`, which converts sparse batches to dense tensors, applies dense pooling, and converts the pooled coarse graph back to sparse format so the shared downstream backbone can stay unchanged.
 
+Activation checkpointing can reduce GPU memory at the cost of extra
+recomputation during backpropagation. It applies to the model forward path for
+any pooling method and is useful when a run does not fit in GPU memory:
+
+```bash
+gplab-train --pool diffpool --pool-ratio 0.5 --dataset PROTEINS --activation-checkpoint
+```
+
+Strict automation jobs must carry this setting explicitly in the train block:
+
+```json
+"train": {
+  "...": "...",
+  "activation_checkpoint": true
+}
+```
+
 ### Pooling Contract
 
 All pooling layers are expected to return `PoolOutput` from `src/gplab/layers/pool/contracts.py`.
@@ -266,7 +283,7 @@ def build_pool(
     ...
 ```
 
-GPLab supports factories with the full signature above and simple factories that only accept `(in_channels, ratio)`.
+GPLab requires the full factory signature above for custom pooling plugins.
 
 ## Configuration
 
@@ -290,6 +307,7 @@ GPLab supports factories with the full signature above and simple factories that
 - `seed_mode`
 - `seed_base`
 - `allow_duplicate_seeds`
+- `activation_checkpoint`
 - `train_ratio`
 - `val_ratio`
 
@@ -398,6 +416,12 @@ Generate complete executable train jobs without running them:
 
 ```bash
 gplab-expand-cases --pools sagpool,diffpool --datasets MUTAG,PROTEINS --output-format json
+```
+
+Generate cases with activation checkpointing enabled:
+
+```bash
+gplab-expand-cases --pools sagpool,diffpool --datasets PROTEINS --activation-checkpoint --output-format json
 ```
 
 ## Reproducibility Notes

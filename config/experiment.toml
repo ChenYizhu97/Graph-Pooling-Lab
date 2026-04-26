@@ -8,5 +8,6 @@ seeds = "config/seeds"
 seed_mode = "auto"
 seed_base = 20260320
 allow_duplicate_seeds = false
+activation_checkpoint = false
 train_ratio = 0.8
 val_ratio = 0.1

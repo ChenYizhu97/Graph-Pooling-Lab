@@ -131,6 +131,10 @@ def normalize_train_job(job: dict) -> dict:
                 train["allow_duplicate_seeds"],
                 field_name="train.allow_duplicate_seeds",
             ),
+            "activation_checkpoint": _normalize_bool(
+                train["activation_checkpoint"],
+                field_name="train.activation_checkpoint",
+            ),
         },
         "log_file": _normalize_optional_string(raw["log_file"], field_name="log_file"),
         "tag": _normalize_optional_string(raw["tag"], field_name="tag"),
@@ -186,8 +190,8 @@ def compute_train_job_case_id(job: dict) -> str:
             "seed_base": job["train"]["seed_base"],
             "seed_list": job["train"]["seed_list"],
             "allow_duplicate_seeds": job["train"]["allow_duplicate_seeds"],
+            "activation_checkpoint": job["train"]["activation_checkpoint"],
         },
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha1(encoded).hexdigest()[:12]
-

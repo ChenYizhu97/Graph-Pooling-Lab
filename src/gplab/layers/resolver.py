@@ -5,7 +5,7 @@ from torch.nn import Linear
 from torch_geometric.nn import GraphConv, GCNConv, DenseGCNConv, GINConv
 from torch_geometric.nn.pool import TopKPooling, ASAPooling
 from .pool import DensePoolAdapter, SAGPooling, SparsePooling, PoolOutput
-from gplab.utils.registry import BUILTIN_POOLS
+from gplab.utils.registry import BUILTIN_POOLS, DENSE_POOLS
 
 SUPPORTED_CONVS = ("GCN", "GraphConv", "GIN")
 
@@ -105,7 +105,13 @@ class _ASAPoolWrapper(torch.nn.Module):
         self.pool.reset_parameters()
 
 
-def pool_resolver(pool:str, in_channels:int, ratio:float=0.5, avg_node_num:Optional[float]=None, nonlinearity:Union[str, callable]="relu") -> Optional[torch.nn.Module]:
+def pool_resolver(
+    pool: str,
+    in_channels: int,
+    ratio: float = 0.5,
+    avg_node_num: Optional[float] = None,
+    nonlinearity: Union[str, callable] = "relu",
+) -> Optional[torch.nn.Module]:
     """
     Resolve pooling method name to pooling layer instance.
     
@@ -139,27 +145,24 @@ def pool_resolver(pool:str, in_channels:int, ratio:float=0.5, avg_node_num:Optio
         # SparsePooling already returns PoolOutput
         return SparsePooling(in_channels, ratio=ratio, act=nonlinearity)
 
-    if pool in ("mincutpool", "diffpool", "densepool"):
+    if pool in DENSE_POOLS:
         k = _dense_cluster_size(avg_node_num, ratio)
-        if pool == "mincutpool":
-            return DensePoolAdapter(Linear(in_channels, k), pool, nonlinearity=nonlinearity)
-        if pool == "diffpool":
-            return DensePoolAdapter(DenseGCNConv(in_channels, k), pool, nonlinearity=nonlinearity)
-        return DensePoolAdapter(Linear(in_channels, k), pool, nonlinearity=nonlinearity)
+        assignment_pool = DenseGCNConv(in_channels, k) if pool == "diffpool" else Linear(in_channels, k)
+        return DensePoolAdapter(
+            assignment_pool,
+            pool,
+            nonlinearity=nonlinearity,
+        )
 
     if ":" in pool:
         factory = _load_pool_factory(pool)
-        try:
-            custom_pool = factory(
-                in_channels=in_channels,
-                ratio=ratio,
-                avg_node_num=avg_node_num,
-                nonlinearity=nonlinearity,
-            )
-        except TypeError:
-            # Minimal plugin factories may only accept (in_channels, ratio).
-            custom_pool = factory(in_channels, ratio)
-        
+        custom_pool = factory(
+            in_channels=in_channels,
+            ratio=ratio,
+            avg_node_num=avg_node_num,
+            nonlinearity=nonlinearity,
+        )
+
         # Custom pooling is expected to return PoolOutput directly.
         # First-batch validation will catch contract violations.
         return custom_pool

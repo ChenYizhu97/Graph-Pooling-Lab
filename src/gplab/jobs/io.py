@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from .schema import require_mapping
+from .schema import normalize_train_job, require_mapping
 
 
 def load_job_file(path: str) -> dict:
@@ -16,3 +16,6 @@ def load_job_file(path: str) -> dict:
 
     return require_mapping(payload, label="job")
 
+
+def load_normalized_job_file(path: str) -> dict:
+    return normalize_train_job(load_job_file(path))

@@ -2,7 +2,7 @@ import typer
 from typing_extensions import Annotated
 
 from gplab.cli.output import build_error_payload, emit_json, validate_output_format
-from gplab.jobs import compute_train_job_case_id, load_job_file, normalize_train_job
+from gplab.jobs import compute_train_job_case_id, load_normalized_job_file
 
 app = typer.Typer(pretty_exceptions_enable=False)
 
@@ -14,7 +14,7 @@ def main(
 ):
     output_format = validate_output_format(output_format)
     try:
-        normalized_job = normalize_train_job(load_job_file(job_file))
+        normalized_job = load_normalized_job_file(job_file)
         payload = {
             "ok": True,
             "kind": "normalized_job",

@@ -9,9 +9,10 @@ from torch import Tensor
 from torch_geometric.data import Data
 from torch_geometric.nn import MLP, BatchNorm, LayerNorm
 from torch_geometric.nn.resolver import activation_resolver
+from torch.utils.checkpoint import checkpoint
 
 from gplab.layers.functional import readout
-from gplab.layers.pool.contracts import validate_pool_output
+from gplab.layers.pool.contracts import PoolOutput, validate_pool_output
 from gplab.layers.resolver import conv_resolver, pool_resolver
 from gplab.paths import default_config_path
 
@@ -32,9 +33,9 @@ class BaseModel(torch.nn.Module):
         x: Tensor,
         edge_index: Tensor,
         batch: Tensor,
-    ) -> tuple[Tensor, Tensor, Tensor, Optional[Tensor], Optional[Tensor]]:
+    ) -> PoolOutput:
         if pool is None:
-            return x, edge_index, batch, None, None
+            return PoolOutput(x=x, edge_index=edge_index, batch=batch)
 
         pool_out = pool(x=x, edge_index=edge_index, batch=batch)
 
@@ -42,13 +43,7 @@ class BaseModel(torch.nn.Module):
             validate_pool_output(pool_out, pool.__class__.__name__)
             self._pool_validated = True
 
-        return (
-            pool_out.x,
-            pool_out.edge_index,
-            pool_out.batch,
-            pool_out.edge_weight,
-            pool_out.aux_loss,
-        )
+        return pool_out
 
     def _load_from_config(self, config: dict) -> None:
         self.p_dropout = config["p_dropout"]
@@ -69,6 +64,7 @@ class GraphClassifierBase(BaseModel, ABC):
         ratio: float = 0.5,
         config: Optional[dict] = None,
         avg_node_num: Optional[float] = None,
+        activation_checkpoint: bool = False,
         norm: str = "layer_norm",
         *args,
         **kwargs,
@@ -78,6 +74,7 @@ class GraphClassifierBase(BaseModel, ABC):
         self.n_classes = n_classes
         self.pool_method = pool_method
         self.norm_name = norm
+        self.activation_checkpoint = activation_checkpoint
 
         if config is None:
             print("No config provided to model...Using default config...")
@@ -111,8 +108,8 @@ class GraphClassifierBase(BaseModel, ABC):
     def forward(self, data: Data) -> tuple[Tensor, Optional[Tensor]]:
         x, edge_index, batch, edge_weight = self._unpack_graph(data)
 
-        x = self.pre_gnn(x)
-        x = self._apply_conv_block(
+        x = self._checkpoint_tensor(self.pre_gnn, x)
+        x = self._apply_checkpointed_conv_block(
             self.conv1,
             self.ln_conv1,
             x,
@@ -122,23 +119,23 @@ class GraphClassifierBase(BaseModel, ABC):
         )
 
         before_pool = self._readout_before_pool(x, batch)
-        x, edge_index, batch, edge_weight, aux_loss = self._pool(self.pool, x=x, edge_index=edge_index, batch=batch)
+        pool_out = self._checkpoint_pool(x, edge_index, batch)
 
-        x = self._apply_conv_block(
+        x = self._apply_checkpointed_conv_block(
             self.conv2,
             self.ln_conv2,
-            x,
-            edge_index,
-            edge_weight=edge_weight,
+            pool_out.x,
+            pool_out.edge_index,
+            edge_weight=pool_out.edge_weight,
             supports_edge_weight=self.conv2_supports_edge_weight,
         )
-        after_pool = self.global_pool(x=x, batch=batch)
+        after_pool = self._checkpoint_tensor_batch(self.global_pool, x, pool_out.batch)
 
         graph_embedding = self._merge_graph_embeddings(before_pool, after_pool)
-        logits = self.post_gnn(graph_embedding)
+        logits = self._checkpoint_tensor(self.post_gnn, graph_embedding)
         y = F.log_softmax(logits, dim=1)
 
-        return y, aux_loss
+        return y, pool_out.aux_loss
 
     def reset_parameters(self) -> None:
         self.pre_gnn.reset_parameters()
@@ -184,6 +181,96 @@ class GraphClassifierBase(BaseModel, ABC):
             batch = data.edge_index.new_zeros(data.x.size(0))
         edge_weight = getattr(data, "edge_weight", None)
         return data.x, data.edge_index, batch, edge_weight
+
+    def _should_checkpoint(self) -> bool:
+        return self.activation_checkpoint and torch.is_grad_enabled()
+
+    def _checkpoint_tensor(self, fn: callable, x: Tensor) -> Tensor:
+        if not self._should_checkpoint():
+            return fn(x)
+        return checkpoint(fn, x, use_reentrant=False)
+
+    def _checkpoint_tensor_batch(self, fn: callable, x: Tensor, batch: Tensor) -> Tensor:
+        if not self._should_checkpoint():
+            return fn(x=x, batch=batch)
+        return checkpoint(lambda x_arg, batch_arg: fn(x=x_arg, batch=batch_arg), x, batch, use_reentrant=False)
+
+    def _checkpoint_pool(self, x: Tensor, edge_index: Tensor, batch: Tensor) -> PoolOutput:
+        if not self._should_checkpoint():
+            return self._pool(self.pool, x=x, edge_index=edge_index, batch=batch)
+
+        pool_x, pool_edge_index, pool_batch, pool_edge_weight, pool_aux_loss = checkpoint(
+            self._pool_for_checkpoint,
+            x,
+            edge_index,
+            batch,
+            use_reentrant=False,
+        )
+        return PoolOutput(
+            x=pool_x,
+            edge_index=pool_edge_index,
+            batch=pool_batch,
+            edge_weight=pool_edge_weight,
+            aux_loss=pool_aux_loss,
+        )
+
+    def _pool_for_checkpoint(
+        self,
+        x: Tensor,
+        edge_index: Tensor,
+        batch: Tensor,
+    ) -> tuple[Tensor, Tensor, Tensor, Optional[Tensor], Optional[Tensor]]:
+        pool_out = self._pool(self.pool, x=x, edge_index=edge_index, batch=batch)
+        return pool_out.x, pool_out.edge_index, pool_out.batch, pool_out.edge_weight, pool_out.aux_loss
+
+    def _apply_checkpointed_conv_block(
+        self,
+        conv: torch.nn.Module,
+        norm: torch.nn.Module,
+        x: Tensor,
+        edge_index: Tensor,
+        edge_weight: Optional[Tensor] = None,
+        supports_edge_weight: bool = False,
+    ) -> Tensor:
+        if not self._should_checkpoint():
+            return self._apply_conv_block(
+                conv,
+                norm,
+                x,
+                edge_index,
+                edge_weight=edge_weight,
+                supports_edge_weight=supports_edge_weight,
+            )
+
+        if edge_weight is None:
+            return checkpoint(
+                lambda x_arg, edge_index_arg: self._apply_conv_block(
+                    conv,
+                    norm,
+                    x_arg,
+                    edge_index_arg,
+                    edge_weight=None,
+                    supports_edge_weight=supports_edge_weight,
+                ),
+                x,
+                edge_index,
+                use_reentrant=False,
+            )
+
+        return checkpoint(
+            lambda x_arg, edge_index_arg, edge_weight_arg: self._apply_conv_block(
+                conv,
+                norm,
+                x_arg,
+                edge_index_arg,
+                edge_weight=edge_weight_arg,
+                supports_edge_weight=supports_edge_weight,
+            ),
+            x,
+            edge_index,
+            edge_weight,
+            use_reentrant=False,
+        )
 
     def _apply_conv_block(
         self,

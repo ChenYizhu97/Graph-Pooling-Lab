@@ -4,10 +4,9 @@ import torch
 import typer
 from typing_extensions import Annotated
 
-from gplab.experiment.identity import ensure_record_id
+from gplab.experiment.identity import require_record_id
 from gplab.experiment.record import summarize_record
-from gplab.experiment.request import build_job_request
-from gplab.experiment.train_result import execute_train_request
+from gplab.experiment.train_result import execute_train_job
 from gplab.cli.output import build_error_payload, emit_json, validate_output_format
 from gplab.jobs import compute_train_job_case_id, normalize_train_job
 from gplab.runtime import build_runtime_meta
@@ -35,6 +34,7 @@ def _build_replay_job(record: dict, *, replay_log_file: str | None) -> dict:
                 "batch_size": train["batch_size"],
                 "patience": train["patience"],
                 "epochs": train["epochs"],
+                "activation_checkpoint": train["activation_checkpoint"],
                 "train_ratio": split["train"],
                 "val_ratio": split["val"],
                 "seed_mode": "list",
@@ -57,15 +57,12 @@ def _compatibility_status(recorded: dict, current: dict) -> tuple[str, list[dict
         ("cuda_available", "cuda_available"),
     ]
     details = []
-    missing_required = False
     mismatch_found = False
     for key, label in checks:
-        recorded_value = recorded.get(key)
-        current_value = current.get(key)
-        match = recorded_value == current_value and recorded_value is not None
-        if recorded_value is None:
-            missing_required = True
-        elif recorded_value != current_value:
+        recorded_value = recorded[key]
+        current_value = current[key]
+        match = recorded_value == current_value
+        if recorded_value != current_value:
             mismatch_found = True
         details.append(
             {
@@ -76,8 +73,6 @@ def _compatibility_status(recorded: dict, current: dict) -> tuple[str, list[dict
             }
         )
 
-    if missing_required:
-        return "unknown", details
     if mismatch_found:
         return "mismatch", details
     return "compatible", details
@@ -93,7 +88,7 @@ def main(
 ):
     output_format = validate_output_format(output_format)
     try:
-        records = [ensure_record_id(record) for record in read_jsonl(log_file)]
+        records = [require_record_id(record) for record in read_jsonl(log_file)]
         record = next((record for record in records if record["record_id"] == record_id), None)
         if record is None:
             raise typer.BadParameter(
@@ -105,7 +100,7 @@ def main(
 
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         current_runtime = build_runtime_meta(device)
-        status, details = _compatibility_status(record.get("runtime", {}), current_runtime)
+        status, details = _compatibility_status(record["runtime"], current_runtime)
         replay_payload = {
             "ok": True,
             "kind": "replay_result",
@@ -126,9 +121,8 @@ def main(
 
         if output_format == "json":
             if run:
-                request = build_job_request(replay_job)
-                run_payload = execute_train_request(
-                    request,
+                run_payload = execute_train_job(
+                    replay_job,
                     emit_text=False,
                     request_details={
                         "mode": "replay",
@@ -162,9 +156,8 @@ def main(
                     print(f"  - {item['field']}: recorded={item['recorded']!r}, current={item['current']!r}")
 
         if run:
-            request = build_job_request(replay_job)
-            run_payload = execute_train_request(
-                request,
+            run_payload = execute_train_job(
+                replay_job,
                 emit_text=True,
                 request_details={
                     "mode": "replay",

@@ -27,6 +27,7 @@ def build_cli_request(
     experiment_conf: dict,
     pool: Optional[str],
     pool_ratio: Optional[float],
+    activation_checkpoint: Optional[bool],
     dataset_name: Optional[str],
     model_type: Optional[str],
     tag: Optional[str],
@@ -84,6 +85,9 @@ def build_cli_request(
     expr_conf["seed_base"] = seed_base
     expr_conf["seed_list"] = deepcopy(seed_list)
     expr_conf["allow_duplicate_seeds"] = allow_duplicate_seeds
+    expr_conf["activation_checkpoint"] = bool(
+        activation_checkpoint if activation_checkpoint is not None else expr_conf.get("activation_checkpoint", False)
+    )
     conf["model"]["variant"] = final_model_type
     conf["pool"] = {
         "method": final_pool,
@@ -122,6 +126,7 @@ def build_job_request(job: dict) -> TrainRequestContext:
             "seed_base": train["seed_base"],
             "seed_list": deepcopy(train["seed_list"]),
             "allow_duplicate_seeds": train["allow_duplicate_seeds"],
+            "activation_checkpoint": train["activation_checkpoint"],
         },
         "pool": {
             "method": pool_name,

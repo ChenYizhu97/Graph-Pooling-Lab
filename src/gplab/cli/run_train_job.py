@@ -1,9 +1,8 @@
 import typer
 from typing_extensions import Annotated
 
-from gplab.experiment.request import build_job_request
-from gplab.experiment.train_result import execute_train_request
-from gplab.jobs import load_job_file, normalize_train_job
+from gplab.experiment.train_result import execute_train_job
+from gplab.jobs import load_normalized_job_file
 from gplab.cli.output import build_error_payload, emit_json, validate_output_format
 
 app = typer.Typer(pretty_exceptions_enable=False)
@@ -16,11 +15,9 @@ def main(
 ):
     output_format = validate_output_format(output_format)
     try:
-        loaded_job = load_job_file(job_file)
-        normalized_job = normalize_train_job(loaded_job)
-        request = build_job_request(normalized_job)
-        payload = execute_train_request(
-            request,
+        normalized_job = load_normalized_job_file(job_file)
+        payload = execute_train_job(
+            normalized_job,
             emit_text=output_format == "text",
             request_details={
                 "job_file": job_file,

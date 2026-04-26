@@ -42,10 +42,10 @@ This file defines stable facts, approved tool surfaces, and execution rules for 
 
 ### BENCHMARK_GROUPING_BOUNDARY
 - Type: object
-- Value: `{"include": ["spec.dataset", "spec.model", "spec.train"], "exclude": ["spec.pool"]}`
+- Value: `{"include": ["spec.dataset", "spec.model", "spec.train except activation_checkpoint"], "exclude": ["spec.pool", "spec.train.activation_checkpoint"]}`
 - Meaning: Fair-comparison grouping boundary used by query summaries and reports.
 - Use: Group benchmark-equivalent records and compare pooling methods inside the same boundary.
-- Do not infer: Do not treat pool choice as part of the benchmark key.
+- Do not infer: Do not treat pool choice or activation checkpointing as part of the benchmark key.
 
 ### DENSE_POOL_PROTOCOL
 - Type: object
@@ -56,7 +56,7 @@ This file defines stable facts, approved tool surfaces, and execution rules for 
 
 ### EXPAND_CASES_DEFAULTS
 - Type: object
-- Value: `{"dataset": "PROTEINS", "pool": {"name": "nopool", "ratio": 0.5}, "model": {"hidden_features": 128, "nonlinearity": "relu", "p_dropout": 0.0, "conv_layer": "GCN", "pre_gnn": [128], "post_gnn": [256, 128], "variant": "sum"}, "train": {"runs": 10, "lr": 0.0005, "batch_size": 32, "patience": 50, "epochs": 500, "train_ratio": 0.8, "val_ratio": 0.1, "seed_mode": "auto", "seed_base": 20260320, "seed_list": null, "allow_duplicate_seeds": false}, "log_file": null, "tag": null}`
+- Value: `{"dataset": "PROTEINS", "pool": {"name": "nopool", "ratio": 0.5}, "model": {"hidden_features": 128, "nonlinearity": "relu", "p_dropout": 0.0, "conv_layer": "GCN", "pre_gnn": [128], "post_gnn": [256, 128], "variant": "sum"}, "train": {"runs": 10, "lr": 0.0005, "batch_size": 32, "patience": 50, "epochs": 500, "train_ratio": 0.8, "val_ratio": 0.1, "seed_mode": "auto", "seed_base": 20260320, "seed_list": null, "allow_duplicate_seeds": false, "activation_checkpoint": false}, "log_file": null, "tag": null}`
 - Meaning: Internal defaults used when `gplab-expand-cases` materializes complete jobs.
 - Use: Expect emitted manifest jobs to be complete even when callers omit optional overrides.
 - Do not infer: Do not assume `gplab-normalize-job` accepts partial jobs or fills missing fields.
@@ -96,6 +96,7 @@ This file defines stable facts, approved tool surfaces, and execution rules for 
   - `seed_base`: integer
   - `seed_list`: `null` or non-empty integer array
   - `allow_duplicate_seeds`: boolean
+  - `activation_checkpoint`: boolean
 - Cross-field rules:
   - `train_ratio > 0`
   - `val_ratio > 0`
@@ -134,7 +135,8 @@ This file defines stable facts, approved tool surfaces, and execution rules for 
     "seed_mode": "auto",
     "seed_base": 20260320,
     "seed_list": null,
-    "allow_duplicate_seeds": false
+    "allow_duplicate_seeds": false,
+    "activation_checkpoint": false
   },
   "log_file": null,
   "tag": null
@@ -150,7 +152,7 @@ This file defines stable facts, approved tool surfaces, and execution rules for 
 
 ### QUERY_RESULT_SCHEMA
 - Type: object
-- Value: `{"required_fields": ["ok", "kind", "records"], "record_summary_fields": ["record_id", "benchmark_key", "dataset", "pool", "pool_ratio", "model_type", "runs", "mean", "std", "avg_best_epoch", "avg_val_loss", "best_test_acc", "worst_test_acc", "val_loss_test_acc_corr"], "optional_record_fields": ["tag", "spec", "replay_command"]}`
+- Value: `{"required_fields": ["ok", "kind", "records"], "record_summary_fields": ["record_id", "benchmark_key", "dataset", "pool", "pool_ratio", "activation_checkpoint", "model_type", "runs", "mean", "std", "avg_best_epoch", "avg_val_loss", "best_test_acc", "worst_test_acc", "val_loss_test_acc_corr"], "optional_record_fields": ["tag", "spec", "replay_command"]}`
 - Meaning: Public payload contract for flat query responses.
 - Use: Parse record summaries without scraping text output.
 - Do not infer: Do not assume extra analytical labels exist.
@@ -171,7 +173,7 @@ This file defines stable facts, approved tool surfaces, and execution rules for 
 
 ### VALIDATION_RESULT_SCHEMA
 - Type: object
-- Value: `{"required_fields": ["ok", "kind", "mode", "plan", "cases", "summary"], "case_fields": ["case_id", "pool", "dataset", "model_type", "status", "seconds", "execution"], "optional_case_fields": ["record_id", "error_type", "message"]}`
+- Value: `{"required_fields": ["ok", "kind", "mode", "plan", "cases", "summary"], "case_fields": ["case_id", "pool", "dataset", "model_type", "activation_checkpoint", "status", "seconds", "execution"], "optional_case_fields": ["record_id", "error_type", "message"]}`
 - Meaning: Public payload contract for smoke validation responses.
 - Use: Consume validation plans and results as structured data.
 - Do not infer: Do not assume validation encodes project-owned policy about what must be run.
@@ -209,6 +211,7 @@ This file defines stable facts, approved tool surfaces, and execution rules for 
   - `--datasets`: comma-separated dataset list
   - `--model-types`: comma-separated model variant list
   - `--pool-ratio`: pooling ratio for every case
+  - `--activation-checkpoint`: use activation checkpointing for the model forward path when GPU memory is tight
   - optional train overrides: `--runs`, `--epochs`, `--patience`, `--lr`, `--batch-size`, `--train-ratio`, `--val-ratio`, `--seed-mode`, `--seed-base`, `--allow-duplicate-seeds`
   - optional routing fields: `--log-file`, `--tag-prefix`
 - Output:
@@ -300,7 +303,7 @@ This file defines stable facts, approved tool surfaces, and execution rules for 
   - `--pools`: comma-separated pools
   - `--datasets`: comma-separated datasets
   - `--model-type`: one model variant
-  - execution overrides: `--pool-ratio`, `--runs`, `--epochs`, `--patience`, `--lr`, `--batch-size`, `--train-ratio`, `--val-ratio`
+  - execution overrides: `--pool-ratio`, `--activation-checkpoint`, `--runs`, `--epochs`, `--patience`, `--lr`, `--batch-size`, `--train-ratio`, `--val-ratio`
   - optional logging and seed controls: `--log-file`, `--seed-mode`, `--seed-base`, `--seed-list`, `--allow-duplicate-seeds`, `--tag-prefix`
 - Output:
   - stdout success: `validation_result`
@@ -326,7 +329,7 @@ This file defines stable facts, approved tool surfaces, and execution rules for 
 - Before executing any mutating tool, prefer `gplab-normalize-job` or `gplab-expand-cases` when the caller benefits from explicit request objects or case plans.
 - Treat payload shapes documented in `Static Facts` as public interface contracts. Do not rely on undocumented top-level fields.
 - When static facts conflict with runtime behavior, prefer code and runtime results, and report the conflict.
-- Do not invent datasets, pools, output formats, or replay compatibility states beyond the values documented here.
+- Do not invent datasets, pools, output formats, or replay compatibility states beyond `compatible` and `mismatch`.
 - `gplab-validate` is a thin orchestrator. Do not treat it as project-owned policy about which cases must be run.
 - Do not modify this file's documented constants unless the user explicitly requests interface changes.
 
