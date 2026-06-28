@@ -1,13 +1,21 @@
-import torch
-import numpy as np
 import random
 from pathlib import Path
-from torch_geometric.data import Dataset
-from torch_geometric.loader import DataLoader
 from typing import Optional
 
+import numpy as np
+import torch
+from torch_geometric.data import Dataset
+from torch_geometric.loader import DataLoader
 
-def configure_runtime_threads():
+
+_RUNTIME_THREADS_CONFIGURED = False
+
+
+def configure_runtime_threads() -> None:
+    global _RUNTIME_THREADS_CONFIGURED
+    if _RUNTIME_THREADS_CONFIGURED:
+        return
+
     # Trade-off choice for this project:
     # 1) keep CPU-side scheduling deterministic enough for repeated runs,
     # 2) avoid large training-time penalty on small TU datasets.
@@ -18,6 +26,7 @@ def configure_runtime_threads():
     except RuntimeError:
         # set_num_interop_threads may be locked once thread pools are initialized.
         pass
+    _RUNTIME_THREADS_CONFIGURED = True
 
     # If stricter determinism is required later, consider enabling:
     # torch.use_deterministic_algorithms(True)
@@ -26,7 +35,7 @@ def configure_runtime_threads():
     # and setting env var CUBLAS_WORKSPACE_CONFIG=:4096:8 before launching Python.
 
 
-def set_np_and_torch(seed: int = 0):
+def set_np_and_torch(seed: int = 0) -> None:
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
@@ -37,17 +46,17 @@ def set_np_and_torch(seed: int = 0):
     torch.backends.cudnn.benchmark = False
 
 
-def seed_worker(worker_id: int):
+def seed_worker(_worker_id: int) -> None:
     worker_seed = torch.initial_seed() % 2**32
     np.random.seed(worker_seed)
     random.seed(worker_seed)
 
 
 def generate_loader(
-        dataset: Dataset,
-        batch_size: int,
-        shuffle: bool = False,
-        seed: int = 0,
+    dataset: Dataset,
+    batch_size: int,
+    shuffle: bool = False,
+    seed: int = 0,
 ) -> DataLoader:
     g = torch.Generator()
     g.manual_seed(seed)
@@ -63,8 +72,8 @@ def generate_loader(
 
 
 def load_seeds(
-        seeds: str,
-        runs: int
+    seeds: str,
+    runs: int,
 ) -> list[int]:
     if runs <= 0:
         return []
@@ -89,12 +98,12 @@ def load_seeds(
 
 
 def resolve_seeds(
-        runs: int,
-        seed_mode: str = "auto",
-        seeds_path: Optional[str] = None,
-        seed_base: int = 20260320,
-        seed_list: Optional[list[int]] = None,
-        allow_duplicate_seeds: bool = False,
+    runs: int,
+    seed_mode: str = "auto",
+    seeds_path: Optional[str] = None,
+    seed_base: int = 20260320,
+    seed_list: Optional[list[int]] = None,
+    allow_duplicate_seeds: bool = False,
 ) -> list[int]:
     if runs <= 0:
         return []

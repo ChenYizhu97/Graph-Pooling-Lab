@@ -26,3 +26,9 @@ DENSE_POOLS = (
     "diffpool",
     "densepool",
 )
+
+SUPPORTED_CONVS = (
+    "GCN",
+    "GraphConv",
+    "GIN",
+)

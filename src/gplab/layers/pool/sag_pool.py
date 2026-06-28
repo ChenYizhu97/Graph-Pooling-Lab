@@ -122,7 +122,7 @@ class SAGPooling(torch.nn.Module):
             attn (torch.Tensor, optional): Optional node-level matrix to use
                 for computing attention scores instead of using the node
                 feature matrix :obj:`x`. (default: :obj:`None`)
-                
+
         Returns:
             PoolOutput with pooled graph structure
         """
@@ -132,7 +132,7 @@ class SAGPooling(torch.nn.Module):
         attn = x if attn is None else attn
         attn = attn.view(-1, 1) if attn.dim() == 1 else attn
         attn = self.gnn(attn, edge_index)
-        
+
         select_out = self.select(attn, batch)
 
         perm = select_out.node_index
@@ -165,11 +165,11 @@ class SAGPooling(torch.nn.Module):
 
 class SelectSAG(Select):
     def __init__(
-            self, 
+            self,
             ratio,
             min_score=None,
             act="tanh",
-            *args, 
+            *args,
             **kwargs
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -178,11 +178,11 @@ class SelectSAG(Select):
             raise ValueError(f"At least one of the 'ratio' and 'min_score' "
                              f"parameters must be specified in "
                              f"'{self.__class__.__name__}'")
-        
+
         self.ratio = ratio
         self.min_score = min_score
         self.act = activation_resolver(act)
-    
+
     def forward(
         self,
         attn: Tensor,
@@ -191,7 +191,7 @@ class SelectSAG(Select):
         """"""
         if batch is None:
             batch = attn.new_zeros(attn.size(0), dtype=torch.long)
-        
+
         attn = attn.view(-1, 1) if attn.dim() == 1 else attn
         attn = attn.squeeze(-1)
 
@@ -199,7 +199,7 @@ class SelectSAG(Select):
             score = self.act(attn)
         else:
             score = softmax(attn, batch)
-        
+
         node_index = topk(score, self.ratio, batch, self.min_score)
         return SelectOutput(
             node_index=node_index,

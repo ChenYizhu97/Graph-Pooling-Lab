@@ -65,12 +65,14 @@ Key modules:
 - `src/gplab/cli/`: CLI implementations exposed as `gplab-*` console commands
 - `src/gplab/data/`: TU dataset loading, splitting, and sparse batch conversion helpers
 - `src/gplab/jobs/`: strict job schema, defaults, file loading, and case manifest expansion
-- `src/gplab/experiment/request.py`: request builders for human config input and strict jobs
+- `src/gplab/experiment/spec.py`: canonical model, pool, train, and experiment specifications
+- `src/gplab/experiment/builders.py`: converts human config input and strict jobs into `ExperimentSpec`
 - `src/gplab/experiment/execute.py`: dataset loading, seed resolution, model construction, and multi-run execution
 - `src/gplab/experiment/record.py`: `spec`, `runtime`, `result`, and `record_id` assembly
 - `src/gplab/model/`: shared graph classifier backbone with `sum` and `plain` variants
 - `src/gplab/layers/resolver.py`: convolution resolver, pooling resolver, and custom plugin loading
-- `src/gplab/layers/pool/DensePoolAdapter.py`: dense-to-sparse bridge for dense pooling methods
+- `src/gplab/layers/pool/dense_pool_adapter.py`: dense-to-sparse bridge for dense pooling methods
+- `src/gplab/model/execution.py`: activation-checkpoint execution helper
 - `src/gplab/runtime.py`: runtime metadata and text-mode experiment presentation
 - `src/gplab/utils/`: shared registries, validation, and JSONL I/O
 
@@ -102,6 +104,12 @@ Run one experiment:
 
 ```bash
 gplab-train --pool sagpool --pool-ratio 0.5 --dataset PROTEINS
+```
+
+Pooling score activation is configured independently from the backbone:
+
+```bash
+gplab-train --pool sagpool --pool-ratio 0.5 --pool-nonlinearity tanh --dataset PROTEINS
 ```
 
 Run the plain model variant:
@@ -174,6 +182,8 @@ pre_gnn -> conv1 -> pool -> conv2 -> readout -> post_gnn
 ```
 
 The default backbone configuration lives in `config/model.toml`.
+`pre_gnn` must end at `hidden_features`, and `post_gnn` must start at
+`2 * hidden_features` because readout concatenates add and max pooling.
 
 ## Pooling Methods
 
@@ -189,6 +199,10 @@ Built-in pooling methods:
 - `densepool`
 
 Sparse poolers work directly on sparse graph batches. Dense poolers are wrapped by `DensePoolAdapter`, which converts sparse batches to dense tensors, applies dense pooling, and converts the pooled coarse graph back to sparse format so the shared downstream backbone can stay unchanged.
+
+The model activation and pooling score activation are separate settings.
+Built-in sparse poolers default to `tanh`; dense assignment methods consume raw
+assignment logits according to their own implementations.
 
 Activation checkpointing can reduce GPU memory at the cost of extra
 recomputation during backpropagation. It applies to the model forward path for
@@ -284,6 +298,8 @@ def build_pool(
 ```
 
 GPLab requires the full factory signature above for custom pooling plugins.
+The returned module must also implement `reset_parameters()` because one model
+instance is reset and reused across seeded runs.
 
 ## Configuration
 
@@ -366,7 +382,10 @@ gplab-query --log-file runs/bench.jsonl --report --sort-by std
 gplab-query --log-file runs/bench.jsonl --report --sort-by avg_val_loss
 ```
 
-The grouped report compares records inside the same benchmark key derived from `dataset`, `model`, and `train` settings, so different pooling methods are ranked inside one comparable group.
+The grouped report compares records with the same dataset, model, training
+settings, pooling ratio, and pooling nonlinearity. The pool method name and
+activation checkpointing are excluded so methods are ranked inside one
+comparable group.
 
 ## Replaying Logged Runs
 
@@ -433,22 +452,31 @@ GPLab keeps reproducibility simple and explicit:
 - runtime metadata stores Python, Torch, PyG, and device information
 - replay uses the logged `spec` instead of depending on mutable local defaults
 
-Current seed modes are:
+Human CLI seed modes are:
 
 - `auto`: generate deterministic unique seeds from `seed_base`
 - `file`: read seeds from a file
 - `list`: use an explicit comma-separated seed list from the CLI
+
+`file` mode is available only in the human TOML/CLI flow. Strict automation jobs
+use `auto` or `list`, so every automation request is self-contained.
+
+Early stopping uses classification validation loss only. Dense-pooling auxiliary
+losses are used during training and recorded separately, but do not change the
+model-selection criterion. Test evaluation runs only when validation loss
+improves.
 
 ## Read the Code
 
 If you want to understand the implementation quickly, this is the shortest path:
 
 1. `src/gplab/cli/` train command implementation
-2. `src/gplab/experiment/execute.py`
-3. `src/gplab/model/classifier_base.py`
-4. `src/gplab/layers/resolver.py`
-5. `src/gplab/layers/pool/DensePoolAdapter.py`
-6. `src/gplab/cli/` query command implementation
-7. `src/gplab/cli/` replay command implementation
+2. `src/gplab/experiment/spec.py`
+3. `src/gplab/experiment/execute.py`
+4. `src/gplab/model/classifier_base.py`
+5. `src/gplab/layers/resolver.py`
+6. `src/gplab/layers/pool/dense_pool_adapter.py`
+7. `src/gplab/cli/` query command implementation
+8. `src/gplab/cli/` replay command implementation
 
 That path covers the full lifecycle from CLI request to pooled model execution to persisted experiment record.

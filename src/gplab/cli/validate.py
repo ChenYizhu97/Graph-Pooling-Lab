@@ -17,6 +17,7 @@ def main(
     datasets: Annotated[str, typer.Option(help="Comma-separated datasets to validate.")] = "MUTAG,PROTEINS",
     model_type: Annotated[str, typer.Option(help="Model variant: sum or plain.")] = "sum",
     pool_ratio: Annotated[float, typer.Option(help="Pooling ratio for all cases.")] = 0.5,
+    pool_nonlinearity: Annotated[str, typer.Option(help="Pooling score nonlinearity.")] = "tanh",
     activation_checkpoint: Annotated[bool, typer.Option(help="Use activation checkpointing to reduce GPU memory at extra compute cost.")] = False,
     runs: Annotated[int, typer.Option(help="Runs per smoke case.")] = 1,
     epochs: Annotated[int, typer.Option(help="Epochs per smoke case.")] = 1,
@@ -57,6 +58,7 @@ def main(
             datasets=parse_csv_list(datasets),
             model_types=[model_type],
             pool_ratio=pool_ratio,
+            pool_nonlinearity=pool_nonlinearity,
             activation_checkpoint=activation_checkpoint,
             tag_prefix=tag_prefix,
             log_file=log_file,
@@ -81,6 +83,7 @@ def main(
                 case = {
                     "case_id": case_id,
                     "pool": pool,
+                    "pool_nonlinearity": pool_nonlinearity,
                     "dataset": dataset,
                     "model_type": model_type,
                     "activation_checkpoint": activation_checkpoint,
@@ -95,6 +98,7 @@ def main(
                 case = {
                     "case_id": case_id,
                     "pool": pool,
+                    "pool_nonlinearity": pool_nonlinearity,
                     "dataset": dataset,
                     "model_type": model_type,
                     "activation_checkpoint": activation_checkpoint,

@@ -1,5 +1,3 @@
-from typing import Optional
-
 import torch
 from torch import Tensor
 
@@ -7,11 +5,7 @@ from torch import Tensor
 def to_sparse_batch(
     x: Tensor,
     adj: Tensor,
-    mask: Optional[Tensor] = None,
 ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
-    # `mask` is accepted for interface symmetry with dense helpers, but GPLab's
-    # dense adapter currently treats every fixed output cluster slot as a valid
-    # coarse node by protocol, so the sparse write-back keeps all C slots.
     batch_num = x.size(0)
     node_num = x.size(1)
     x = x.reshape((batch_num * node_num, -1))
@@ -25,7 +19,6 @@ def to_sparse_batch(
     edge_index = (edge_template.unsqueeze(0) + offsets).permute(1, 0, 2).reshape(2, -1)
     edge_weight = adj.reshape(-1)
 
-    batch = torch.arange(batch_num, device=x.device)
-    batch = batch.repeat_interleave(node_num).to(batch.device)
+    batch = torch.arange(batch_num, device=x.device).repeat_interleave(node_num)
 
     return x, edge_index, batch, edge_weight

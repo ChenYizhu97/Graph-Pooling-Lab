@@ -3,7 +3,6 @@ rich
 toml
 torch
 torch-geometric
-torcheval
 tqdm
 typer
 typing_extensions

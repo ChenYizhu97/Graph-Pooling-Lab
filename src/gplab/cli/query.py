@@ -17,24 +17,34 @@ def _sort_value(record: dict, sort_by: str) -> float:
     return float(summary[sort_by])
 
 
-def _print_report(records: list[dict], sort_by: str) -> None:
+def _rank_groups(records: list[dict], sort_by: str) -> list[tuple[str, list[dict]]]:
     groups: dict[str, list[dict]] = {}
     for record in records:
         groups.setdefault(compute_benchmark_key(record), []).append(record)
-
-    for group in groups.values():
-        ranked = sorted(
-            group,
-            key=lambda record: _sort_value(record, sort_by),
-            reverse=sort_by not in {"std", "avg_val_loss", "avg_best_epoch"},
+    return [
+        (
+            benchmark_key,
+            sorted(
+                group,
+                key=lambda record: _sort_value(record, sort_by),
+                reverse=sort_by not in {"std", "avg_val_loss", "avg_best_epoch"},
+            ),
         )
+        for benchmark_key, group in groups.items()
+    ]
+
+
+def _print_report(records: list[dict], sort_by: str) -> None:
+    for benchmark_key, ranked in _rank_groups(records, sort_by):
         first = ranked[0]
         spec = first["spec"]
         tags = sorted({record.get("tag") for record in ranked if record.get("tag") is not None})
         header_parts = [
             f"dataset={spec['dataset']}",
             f"model={spec['model']['variant']}",
-            f"benchmark={compute_benchmark_key(first)}",
+            f"ratio={spec['pool']['ratio']}",
+            f"pool_nonlinearity={spec['pool'].get('nonlinearity', 'tanh')}",
+            f"benchmark={benchmark_key}",
         ]
         if len(tags) == 1:
             header_parts.append(f"tag={tags[0]}")
@@ -59,17 +69,8 @@ def _print_report(records: list[dict], sort_by: str) -> None:
 
 
 def _build_report_payload(records: list[dict], sort_by: str) -> dict:
-    groups: dict[str, list[dict]] = {}
-    for record in records:
-        groups.setdefault(compute_benchmark_key(record), []).append(record)
-
     payload_groups = []
-    for benchmark_key, group in groups.items():
-        ranked = sorted(
-            group,
-            key=lambda record: _sort_value(record, sort_by),
-            reverse=sort_by not in {"std", "avg_val_loss", "avg_best_epoch"},
-        )
+    for benchmark_key, ranked in _rank_groups(records, sort_by):
         group_summaries = []
         for index, record in enumerate(ranked, start=1):
             summary = summarize_record(record)
@@ -82,6 +83,8 @@ def _build_report_payload(records: list[dict], sort_by: str) -> dict:
                 "benchmark_key": benchmark_key,
                 "dataset": first["spec"]["dataset"],
                 "model_type": first["spec"]["model"]["variant"],
+                "pool_ratio": first["spec"]["pool"]["ratio"],
+                "pool_nonlinearity": first["spec"]["pool"].get("nonlinearity", "tanh"),
                 "records": group_summaries,
             }
         )

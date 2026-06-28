@@ -2,7 +2,6 @@ from typing import Optional
 
 import torch
 from torch import Tensor
-from torch_geometric.nn.resolver import activation_resolver
 from torch_geometric.nn.dense import dense_diff_pool, dense_mincut_pool
 from torch_geometric.utils import to_dense_adj, to_dense_batch
 
@@ -12,26 +11,10 @@ from .contracts import PoolOutput
 
 
 class DensePoolAdapter(torch.nn.Module):
-    def __init__(
-        self,
-        pool: Optional[torch.nn.Module],
-        pool_method: str,
-        nonlinearity="relu",
-        *args,
-        **kwargs,
-    ) -> None:
-        super().__init__(*args, **kwargs)
-        if pool is None:
-            raise ValueError("DensePoolAdapter requires a learnable assignment module.")
-
+    def __init__(self, pool: torch.nn.Module, pool_method: str) -> None:
+        super().__init__()
         self.pool = pool
         self.pool_method = pool_method
-        # Keep the project-level pooling interface symmetric with sparse poolers
-        # and custom plugins. Dense built-ins currently do not apply this
-        # nonlinearity to assignment logits, because PyG's dense_diff_pool and
-        # dense_mincut_pool internally normalize/consume raw assignment scores.
-        # We still keep the resolved callable for future dense-pooling variants.
-        self.nonlinearity = activation_resolver(nonlinearity)
         self.reset_parameters()
 
     def forward(
@@ -42,8 +25,16 @@ class DensePoolAdapter(torch.nn.Module):
     ) -> PoolOutput:
         dense_x, mask, adj = self._to_dense_inputs(x, edge_index, batch)
         assignment = self._compute_assignment(dense_x, adj, mask)
-        pooled_x, pooled_adj, aux_loss = self._apply_pooling(dense_x, adj, assignment, mask)
-        sparse_x, sparse_edge_index, sparse_batch, sparse_edge_weight = to_sparse_batch(pooled_x, pooled_adj)
+        pooled_x, pooled_adj, aux_loss = self._apply_pooling(
+            dense_x,
+            adj,
+            assignment,
+            mask,
+        )
+        sparse_x, sparse_edge_index, sparse_batch, sparse_edge_weight = to_sparse_batch(
+            pooled_x,
+            pooled_adj,
+        )
 
         return PoolOutput(
             x=sparse_x,
@@ -91,7 +82,12 @@ class DensePoolAdapter(torch.nn.Module):
         assignment: Tensor,
         mask: Tensor,
     ) -> tuple[Tensor, Tensor, Tensor]:
-        pooled_x, pooled_adj, mincut_loss, ortho_loss = dense_mincut_pool(x, adj, assignment, mask)
+        pooled_x, pooled_adj, mincut_loss, ortho_loss = dense_mincut_pool(
+            x,
+            adj,
+            assignment,
+            mask,
+        )
         aux_loss = 0.5 * mincut_loss + ortho_loss
         return pooled_x, pooled_adj, aux_loss
 
@@ -102,7 +98,12 @@ class DensePoolAdapter(torch.nn.Module):
         assignment: Tensor,
         mask: Tensor,
     ) -> tuple[Tensor, Tensor, Tensor]:
-        pooled_x, pooled_adj, link_loss, ent_loss = dense_diff_pool(x, adj, assignment, mask)
+        pooled_x, pooled_adj, link_loss, ent_loss = dense_diff_pool(
+            x,
+            adj,
+            assignment,
+            mask,
+        )
         aux_loss = 0.1 * link_loss + 0.1 * ent_loss
         return pooled_x, pooled_adj, aux_loss
 

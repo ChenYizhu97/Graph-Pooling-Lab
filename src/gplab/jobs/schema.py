@@ -3,18 +3,14 @@ import json
 import math
 from typing import Optional
 
-from gplab.utils.validation import (
-    validate_dataset_value,
-    validate_model_type_value,
-    validate_pool_ratio_value,
-    validate_pool_value,
-)
+from gplab.experiment.spec import ExperimentSpec
+from gplab.utils.validation import validate_seed_mode_value
 
 from .defaults import AUTOMATION_MODEL_DEFAULTS, AUTOMATION_TRAIN_DEFAULTS
 
 
 JOB_TOP_LEVEL_FIELDS = {"dataset", "pool", "model", "train", "log_file", "tag"}
-JOB_POOL_FIELDS = {"name", "ratio"}
+JOB_POOL_FIELDS = {"name", "ratio", "nonlinearity"}
 FULL_MODEL_FIELDS = set(AUTOMATION_MODEL_DEFAULTS)
 FULL_TRAIN_FIELDS = set(AUTOMATION_TRAIN_DEFAULTS)
 
@@ -104,9 +100,16 @@ def normalize_train_job(job: dict) -> dict:
         "pool": {
             "name": _require_string(pool["name"], field_name="pool.name"),
             "ratio": _normalize_float(pool["ratio"], field_name="pool.ratio"),
+            "nonlinearity": _require_string(
+                pool["nonlinearity"],
+                field_name="pool.nonlinearity",
+            ),
         },
         "model": {
-            "hidden_features": _normalize_int(model["hidden_features"], field_name="model.hidden_features"),
+            "hidden_features": _normalize_int(
+                model["hidden_features"],
+                field_name="model.hidden_features",
+            ),
             "nonlinearity": _require_string(model["nonlinearity"], field_name="model.nonlinearity"),
             "p_dropout": _normalize_float(model["p_dropout"], field_name="model.p_dropout"),
             "conv_layer": _require_string(model["conv_layer"], field_name="model.conv_layer"),
@@ -126,7 +129,11 @@ def normalize_train_job(job: dict) -> dict:
             "seed_base": _normalize_int(train["seed_base"], field_name="train.seed_base"),
             "seed_list": None
             if train["seed_list"] is None
-            else _normalize_int_list(train["seed_list"], field_name="train.seed_list", allow_empty=False),
+            else _normalize_int_list(
+                train["seed_list"],
+                field_name="train.seed_list",
+                allow_empty=False,
+            ),
             "allow_duplicate_seeds": _normalize_bool(
                 train["allow_duplicate_seeds"],
                 field_name="train.allow_duplicate_seeds",
@@ -140,58 +147,12 @@ def normalize_train_job(job: dict) -> dict:
         "tag": _normalize_optional_string(raw["tag"], field_name="tag"),
     }
 
-    validate_dataset_value(normalized["dataset"])
-    validate_pool_ratio_value(normalized["pool"]["ratio"])
-    validate_pool_value(normalized["pool"]["name"])
-    validate_model_type_value(normalized["model"]["variant"])
-
-    if normalized["train"]["seed_mode"] not in {"auto", "file", "list"}:
-        raise ValueError("train.seed_mode must be 'auto', 'file', or 'list'.")
-
-    train_ratio = normalized["train"]["train_ratio"]
-    val_ratio = normalized["train"]["val_ratio"]
-    if train_ratio <= 0 or val_ratio <= 0 or train_ratio + val_ratio >= 1:
-        raise ValueError(
-            "Invalid split ratio. Require train_ratio > 0, val_ratio > 0, and train_ratio + val_ratio < 1."
-        )
-    if normalized["train"]["runs"] <= 0:
-        raise ValueError("Invalid runs value. Require train.runs > 0.")
-    if normalized["train"]["seed_list"] is not None and normalized["train"]["seed_mode"] != "list":
-        raise ValueError("train.seed_mode must be 'list' when train.seed_list is provided in a complete job.")
-
-    return normalized
+    validate_seed_mode_value(normalized["train"]["seed_mode"], allowed=("auto", "list"))
+    return ExperimentSpec.from_job(normalized).to_job()
 
 
 def compute_train_job_case_id(job: dict) -> str:
-    payload = {
-        "dataset": job["dataset"],
-        "pool": {
-            "name": job["pool"]["name"],
-            "ratio": job["pool"]["ratio"],
-        },
-        "model": {
-            "hidden_features": job["model"]["hidden_features"],
-            "nonlinearity": job["model"]["nonlinearity"],
-            "p_dropout": job["model"]["p_dropout"],
-            "conv_layer": job["model"]["conv_layer"],
-            "pre_gnn": job["model"]["pre_gnn"],
-            "post_gnn": job["model"]["post_gnn"],
-            "variant": job["model"]["variant"],
-        },
-        "train": {
-            "runs": job["train"]["runs"],
-            "lr": job["train"]["lr"],
-            "batch_size": job["train"]["batch_size"],
-            "patience": job["train"]["patience"],
-            "epochs": job["train"]["epochs"],
-            "train_ratio": job["train"]["train_ratio"],
-            "val_ratio": job["train"]["val_ratio"],
-            "seed_mode": job["train"]["seed_mode"],
-            "seed_base": job["train"]["seed_base"],
-            "seed_list": job["train"]["seed_list"],
-            "allow_duplicate_seeds": job["train"]["allow_duplicate_seeds"],
-            "activation_checkpoint": job["train"]["activation_checkpoint"],
-        },
-    }
+    normalized = normalize_train_job(job)
+    payload = {key: value for key, value in normalized.items() if key not in {"log_file", "tag"}}
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha1(encoded).hexdigest()[:12]

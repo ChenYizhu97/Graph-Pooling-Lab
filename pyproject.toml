@@ -14,7 +14,6 @@ dependencies = [
     "toml",
     "torch",
     "torch-geometric",
-    "torcheval",
     "tqdm",
     "typer",
     "typing_extensions",
@@ -31,4 +30,3 @@ gplab-validate = "gplab.cli.validate:app"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-

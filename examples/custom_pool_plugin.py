@@ -100,3 +100,6 @@ class MinimalCustomPool(torch.nn.Module):
             batch=batch,  # Replace with actual batch vector
             aux_loss=None,  # Optional auxiliary loss
         )
+
+    def reset_parameters(self):
+        pass

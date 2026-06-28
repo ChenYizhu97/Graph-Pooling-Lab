@@ -31,9 +31,9 @@ def validate_model_type_value(value: str) -> None:
         raise ValueError("model_type must be 'sum' or 'plain'.")
 
 
-def validate_seed_mode_value(mode: str) -> None:
-    if mode not in SEED_MODES:
-        raise ValueError("seed_mode must be 'auto', 'file', or 'list'.")
+def validate_seed_mode_value(mode: str, *, allowed: tuple[str, ...] = SEED_MODES) -> None:
+    if mode not in allowed:
+        raise ValueError(f"seed_mode must be one of: {', '.join(allowed)}.")
 
 
 def normalize_config_seed(value) -> int:

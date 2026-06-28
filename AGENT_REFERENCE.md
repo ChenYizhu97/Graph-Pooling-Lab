@@ -37,15 +37,15 @@ This file defines stable facts, approved tool surfaces, and execution rules for 
 - Type: string
 - Value: `"<python_module>:<factory_name>"`
 - Meaning: Required string format for custom pooling factories.
-- Use: Pass custom pooling through job files or tool flags that accept pool names. No GPLab source edit is required if Python can import the module.
+- Use: Pass custom pooling through job files or tool flags that accept pool names. The factory must return `torch.nn.Module`, the module must return `PoolOutput`, and it must implement `reset_parameters()`.
 - Do not infer: Do not assume arbitrary plugin naming schemes are accepted.
 
 ### BENCHMARK_GROUPING_BOUNDARY
 - Type: object
-- Value: `{"include": ["spec.dataset", "spec.model", "spec.train except activation_checkpoint"], "exclude": ["spec.pool", "spec.train.activation_checkpoint"]}`
+- Value: `{"include": ["spec.dataset", "spec.model", "spec.pool.ratio", "spec.pool.nonlinearity", "spec.train except activation_checkpoint"], "exclude": ["spec.pool.name", "spec.pool.source", "spec.train.activation_checkpoint"]}`
 - Meaning: Fair-comparison grouping boundary used by query summaries and reports.
 - Use: Group benchmark-equivalent records and compare pooling methods inside the same boundary.
-- Do not infer: Do not treat pool choice or activation checkpointing as part of the benchmark key.
+- Do not infer: Do not treat pool method choice or activation checkpointing as part of the benchmark key. Pool ratio and pooling nonlinearity are part of the key.
 
 ### DENSE_POOL_PROTOCOL
 - Type: object
@@ -56,7 +56,7 @@ This file defines stable facts, approved tool surfaces, and execution rules for 
 
 ### EXPAND_CASES_DEFAULTS
 - Type: object
-- Value: `{"dataset": "PROTEINS", "pool": {"name": "nopool", "ratio": 0.5}, "model": {"hidden_features": 128, "nonlinearity": "relu", "p_dropout": 0.0, "conv_layer": "GCN", "pre_gnn": [128], "post_gnn": [256, 128], "variant": "sum"}, "train": {"runs": 10, "lr": 0.0005, "batch_size": 32, "patience": 50, "epochs": 500, "train_ratio": 0.8, "val_ratio": 0.1, "seed_mode": "auto", "seed_base": 20260320, "seed_list": null, "allow_duplicate_seeds": false, "activation_checkpoint": false}, "log_file": null, "tag": null}`
+- Value: `{"dataset": "PROTEINS", "pool": {"name": "nopool", "ratio": 0.5, "nonlinearity": "tanh"}, "model": {"hidden_features": 128, "nonlinearity": "relu", "p_dropout": 0.0, "conv_layer": "GCN", "pre_gnn": [128], "post_gnn": [256, 128], "variant": "sum"}, "train": {"runs": 10, "lr": 0.0005, "batch_size": 32, "patience": 50, "epochs": 500, "train_ratio": 0.8, "val_ratio": 0.1, "seed_mode": "auto", "seed_base": 20260320, "seed_list": null, "allow_duplicate_seeds": false, "activation_checkpoint": false}, "log_file": null, "tag": null}`
 - Meaning: Internal defaults used when `gplab-expand-cases` materializes complete jobs.
 - Use: Expect emitted manifest jobs to be complete even when callers omit optional overrides.
 - Do not infer: Do not assume `gplab-normalize-job` accepts partial jobs or fills missing fields.
@@ -76,6 +76,7 @@ This file defines stable facts, approved tool surfaces, and execution rules for 
 - `pool` fields:
   - `name`: string
   - `ratio`: number in `(0, 1]`
+  - `nonlinearity`: non-empty string
 - `model` fields:
   - `hidden_features`: integer
   - `nonlinearity`: string
@@ -92,7 +93,7 @@ This file defines stable facts, approved tool surfaces, and execution rules for 
   - `epochs`: integer
   - `train_ratio`: number
   - `val_ratio`: number
-  - `seed_mode`: `"auto"`, `"file"`, or `"list"`
+  - `seed_mode`: `"auto"` or `"list"`
   - `seed_base`: integer
   - `seed_list`: `null` or non-empty integer array
   - `allow_duplicate_seeds`: boolean
@@ -102,6 +103,8 @@ This file defines stable facts, approved tool surfaces, and execution rules for 
   - `val_ratio > 0`
   - `train_ratio + val_ratio < 1`
   - if `seed_list` is not `null`, `seed_mode` must be `"list"`
+  - `pre_gnn[-1]` must equal `hidden_features`
+  - `post_gnn[0]` must equal `2 * hidden_features`
 - Validation behavior:
   - unknown fields are rejected
   - partial jobs are rejected
@@ -113,7 +116,8 @@ This file defines stable facts, approved tool surfaces, and execution rules for 
   "dataset": "PROTEINS",
   "pool": {
     "name": "sagpool",
-    "ratio": 0.5
+    "ratio": 0.5,
+    "nonlinearity": "tanh"
   },
   "model": {
     "hidden_features": 128,
@@ -152,14 +156,14 @@ This file defines stable facts, approved tool surfaces, and execution rules for 
 
 ### QUERY_RESULT_SCHEMA
 - Type: object
-- Value: `{"required_fields": ["ok", "kind", "records"], "record_summary_fields": ["record_id", "benchmark_key", "dataset", "pool", "pool_ratio", "activation_checkpoint", "model_type", "runs", "mean", "std", "avg_best_epoch", "avg_val_loss", "best_test_acc", "worst_test_acc", "val_loss_test_acc_corr"], "optional_record_fields": ["tag", "spec", "replay_command"]}`
+- Value: `{"required_fields": ["ok", "kind", "records"], "record_summary_fields": ["record_id", "benchmark_key", "dataset", "pool", "pool_ratio", "pool_nonlinearity", "activation_checkpoint", "model_type", "runs", "mean", "std", "avg_best_epoch", "avg_val_loss", "avg_val_auxiliary_loss", "best_test_acc", "worst_test_acc", "val_loss_test_acc_corr"], "optional_record_fields": ["tag", "spec", "replay_command"]}`
 - Meaning: Public payload contract for flat query responses.
 - Use: Parse record summaries without scraping text output.
 - Do not infer: Do not assume extra analytical labels exist.
 
 ### QUERY_REPORT_SCHEMA
 - Type: object
-- Value: `{"required_fields": ["ok", "kind", "groups"], "group_fields": ["benchmark_key", "dataset", "model_type", "records"]}`
+- Value: `{"required_fields": ["ok", "kind", "groups"], "group_fields": ["benchmark_key", "dataset", "model_type", "pool_ratio", "pool_nonlinearity", "records"]}`
 - Meaning: Public payload contract for grouped query reports.
 - Use: Consume comparable benchmark groups programmatically.
 - Do not infer: Do not assume project-owned recommendation labels exist.
@@ -173,7 +177,7 @@ This file defines stable facts, approved tool surfaces, and execution rules for 
 
 ### VALIDATION_RESULT_SCHEMA
 - Type: object
-- Value: `{"required_fields": ["ok", "kind", "mode", "plan", "cases", "summary"], "case_fields": ["case_id", "pool", "dataset", "model_type", "activation_checkpoint", "status", "seconds", "execution"], "optional_case_fields": ["record_id", "error_type", "message"]}`
+- Value: `{"required_fields": ["ok", "kind", "mode", "plan", "cases", "summary"], "case_fields": ["case_id", "pool", "pool_nonlinearity", "dataset", "model_type", "activation_checkpoint", "status", "seconds", "execution"], "optional_case_fields": ["record_id", "error_type", "message"]}`
 - Meaning: Public payload contract for smoke validation responses.
 - Use: Consume validation plans and results as structured data.
 - Do not infer: Do not assume validation encodes project-owned policy about what must be run.
@@ -211,6 +215,7 @@ This file defines stable facts, approved tool surfaces, and execution rules for 
   - `--datasets`: comma-separated dataset list
   - `--model-types`: comma-separated model variant list
   - `--pool-ratio`: pooling ratio for every case
+  - `--pool-nonlinearity`: pooling score nonlinearity for every case
   - `--activation-checkpoint`: use activation checkpointing for the model forward path when GPU memory is tight
   - optional train overrides: `--runs`, `--epochs`, `--patience`, `--lr`, `--batch-size`, `--train-ratio`, `--val-ratio`, `--seed-mode`, `--seed-base`, `--allow-duplicate-seeds`
   - optional routing fields: `--log-file`, `--tag-prefix`
@@ -303,7 +308,7 @@ This file defines stable facts, approved tool surfaces, and execution rules for 
   - `--pools`: comma-separated pools
   - `--datasets`: comma-separated datasets
   - `--model-type`: one model variant
-  - execution overrides: `--pool-ratio`, `--activation-checkpoint`, `--runs`, `--epochs`, `--patience`, `--lr`, `--batch-size`, `--train-ratio`, `--val-ratio`
+  - execution overrides: `--pool-ratio`, `--pool-nonlinearity`, `--activation-checkpoint`, `--runs`, `--epochs`, `--patience`, `--lr`, `--batch-size`, `--train-ratio`, `--val-ratio`
   - optional logging and seed controls: `--log-file`, `--seed-mode`, `--seed-base`, `--seed-list`, `--allow-duplicate-seeds`, `--tag-prefix`
 - Output:
   - stdout success: `validation_result`

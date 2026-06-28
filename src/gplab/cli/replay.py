@@ -6,9 +6,10 @@ from typing_extensions import Annotated
 
 from gplab.experiment.identity import require_record_id
 from gplab.experiment.record import summarize_record
+from gplab.experiment.spec import ExperimentSpec
 from gplab.experiment.train_result import execute_train_job
 from gplab.cli.output import build_error_payload, emit_json, validate_output_format
-from gplab.jobs import compute_train_job_case_id, normalize_train_job
+from gplab.jobs import compute_train_job_case_id
 from gplab.runtime import build_runtime_meta
 from gplab.utils.jsonl import read_jsonl
 
@@ -16,36 +17,7 @@ app = typer.Typer(pretty_exceptions_enable=False)
 
 
 def _build_replay_job(record: dict, *, replay_log_file: str | None) -> dict:
-    spec = record["spec"]
-    train = spec["train"]
-    split = train["split"]
-    seeds = [int(seed) for seed in train["seeds"]]
-    return normalize_train_job(
-        {
-            "dataset": spec["dataset"],
-            "pool": {
-                "name": spec["pool"]["name"],
-                "ratio": spec["pool"]["ratio"],
-            },
-            "model": spec["model"],
-            "train": {
-                "runs": len(seeds),
-                "lr": train["lr"],
-                "batch_size": train["batch_size"],
-                "patience": train["patience"],
-                "epochs": train["epochs"],
-                "activation_checkpoint": train["activation_checkpoint"],
-                "train_ratio": split["train"],
-                "val_ratio": split["val"],
-                "seed_mode": "list",
-                "seed_base": 20260320,
-                "seed_list": seeds,
-                "allow_duplicate_seeds": len(set(seeds)) != len(seeds),
-            },
-            "log_file": replay_log_file,
-            "tag": record.get("tag"),
-        }
-    )
+    return ExperimentSpec.from_record(record, log_file=replay_log_file).to_job()
 
 
 def _compatibility_status(recorded: dict, current: dict) -> tuple[str, list[dict]]:

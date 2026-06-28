@@ -25,6 +25,10 @@ def compute_benchmark_key(record: dict) -> str:
     payload = {
         "dataset": spec["dataset"],
         "model": spec["model"],
+        "pool_protocol": {
+            "ratio": spec["pool"]["ratio"],
+            "nonlinearity": spec["pool"].get("nonlinearity", "tanh"),
+        },
         "train": train,
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")

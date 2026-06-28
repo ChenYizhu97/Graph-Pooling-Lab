@@ -1,23 +1,24 @@
 from importlib import import_module
 from typing import Callable, Optional, Union
+
 import torch
 from torch.nn import Linear
-from torch_geometric.nn import GraphConv, GCNConv, DenseGCNConv, GINConv
-from torch_geometric.nn.pool import TopKPooling, ASAPooling
-from .pool import DensePoolAdapter, SAGPooling, SparsePooling, PoolOutput
-from gplab.utils.registry import BUILTIN_POOLS, DENSE_POOLS
+from torch_geometric.nn import DenseGCNConv, GCNConv, GINConv, GraphConv
+from torch_geometric.nn.pool import ASAPooling, TopKPooling
 
-SUPPORTED_CONVS = ("GCN", "GraphConv", "GIN")
+from gplab.utils.registry import BUILTIN_POOLS, DENSE_POOLS, SUPPORTED_CONVS
+from .pool import DensePoolAdapter, PoolOutput, SAGPooling, SparsePooling
 
 
 def conv_resolver(layer: str):
-    # Add more convolution layer resolvers here when the benchmark supports them.
     if layer == "GCN":
         return GCNConv
     if layer == "GraphConv":
         return GraphConv
     if layer == "GIN":
-        return lambda in_channel, out_channel: GINConv(nn=Linear(in_channel, out_channel))
+        return lambda in_channels, out_channels: GINConv(
+            nn=Linear(in_channels, out_channels)
+        )
     raise ValueError(
         f"Unknown convolution layer '{layer}'. "
         f"Supported conv layers: {', '.join(SUPPORTED_CONVS)}."
@@ -31,8 +32,8 @@ def _dense_cluster_size(avg_node_num: Optional[float], ratio: float) -> int:
 
 
 def _load_pool_factory(path: str) -> Callable[..., torch.nn.Module]:
-    module_name, sep, factory_name = path.partition(":")
-    if sep == "" or not module_name or not factory_name:
+    module_name, separator, factory_name = path.partition(":")
+    if not separator or not module_name or not factory_name:
         raise ValueError(
             "Custom pool must use '<python_module>:<factory_name>', "
             f"got '{path}'."
@@ -41,119 +42,93 @@ def _load_pool_factory(path: str) -> Callable[..., torch.nn.Module]:
     module = import_module(module_name)
     factory = getattr(module, factory_name, None)
     if factory is None or not callable(factory):
-        raise ValueError(f"Cannot find callable pool factory '{factory_name}' in '{module_name}'.")
+        raise ValueError(
+            f"Cannot find callable pool factory '{factory_name}' in '{module_name}'."
+        )
     return factory
 
 
 class _TopKPoolWrapper(torch.nn.Module):
-    """
-    Wrapper for PyG TopKPooling to return PoolOutput.
-    
-    PyG TopKPooling returns: (x, edge_index, edge_attr, batch, perm, score)
-    """
     def __init__(
         self,
         in_channels: int,
-        ratio: float = 0.5,
-        nonlinearity: Union[str, callable] = "tanh",
-    ):
+        ratio: float,
+        nonlinearity: Union[str, Callable],
+    ) -> None:
         super().__init__()
-        self.pool = TopKPooling(in_channels, ratio=ratio, nonlinearity=nonlinearity)
-    
-    def forward(self, x, edge_index, batch):
-        x_out, edge_index_out, edge_attr_out, batch_out, perm, score = self.pool(
-            x=x, edge_index=edge_index, batch=batch
+        self.pool = TopKPooling(
+            in_channels,
+            ratio=ratio,
+            nonlinearity=nonlinearity,
+        )
+
+    def forward(self, x, edge_index, batch) -> PoolOutput:
+        x, edge_index, edge_attr, batch, perm, score = self.pool(
+            x=x,
+            edge_index=edge_index,
+            batch=batch,
         )
         return PoolOutput(
-            x=x_out,
-            edge_index=edge_index_out,
-            batch=batch_out,
-            edge_attr=edge_attr_out,
+            x=x,
+            edge_index=edge_index,
+            batch=batch,
+            edge_attr=edge_attr,
             perm=perm,
             score=score,
         )
-    
-    def reset_parameters(self):
+
+    def reset_parameters(self) -> None:
         self.pool.reset_parameters()
 
 
 class _ASAPoolWrapper(torch.nn.Module):
-    """
-    Wrapper for PyG ASAPooling to return PoolOutput.
-    
-    PyG ASAPooling returns: (x, edge_index, edge_attr, batch, perm)
-    Note: ASAPooling does not return scores.
-    """
-    def __init__(self, in_channels: int, ratio: float = 0.5):
+    def __init__(self, in_channels: int, ratio: float) -> None:
         super().__init__()
         self.pool = ASAPooling(in_channels, ratio=ratio)
-    
-    def forward(self, x, edge_index, batch):
-        x_out, edge_index_out, edge_attr_out, batch_out, perm = self.pool(
-            x=x, edge_index=edge_index, batch=batch
+
+    def forward(self, x, edge_index, batch) -> PoolOutput:
+        x, edge_index, edge_attr, batch, perm = self.pool(
+            x=x,
+            edge_index=edge_index,
+            batch=batch,
         )
         return PoolOutput(
-            x=x_out,
-            edge_index=edge_index_out,
-            batch=batch_out,
-            edge_attr=edge_attr_out,
+            x=x,
+            edge_index=edge_index,
+            batch=batch,
+            edge_attr=edge_attr,
             perm=perm,
-            score=None,  # ASAPooling doesn't return scores
         )
-    
-    def reset_parameters(self):
+
+    def reset_parameters(self) -> None:
         self.pool.reset_parameters()
 
 
 def pool_resolver(
-    pool: str,
+    pool: Optional[str],
     in_channels: int,
     ratio: float = 0.5,
     avg_node_num: Optional[float] = None,
-    nonlinearity: Union[str, callable] = "relu",
+    nonlinearity: Union[str, Callable] = "tanh",
 ) -> Optional[torch.nn.Module]:
-    """
-    Resolve pooling method name to pooling layer instance.
-    
-    All returned pooling layers are guaranteed to return PoolOutput from forward().
-    
-    Args:
-        pool: Pooling method name or custom factory path
-        in_channels: Number of input channels
-        ratio: Pooling ratio (default: 0.5)
-        avg_node_num: Average number of nodes per graph (required for dense pooling)
-        nonlinearity: Nonlinearity to use
-        
-    Returns:
-        Pooling layer instance or None for "nopool"
-    """
-    # For dense pooling methods, this returns the learnable assignment module wrapped by DensePoolAdapter.
     if pool in (None, "", "nopool"):
         return None
-
     if pool == "topkpool":
-        return _TopKPoolWrapper(in_channels, ratio=ratio, nonlinearity=nonlinearity)
-    
+        return _TopKPoolWrapper(in_channels, ratio, nonlinearity)
     if pool == "sagpool":
-        # SAGPooling already returns PoolOutput
         return SAGPooling(in_channels, ratio=ratio, nonlinearity=nonlinearity)
-    
     if pool == "asapool":
-        return _ASAPoolWrapper(in_channels, ratio=ratio)
-    
+        return _ASAPoolWrapper(in_channels, ratio)
     if pool == "sparsepool":
-        # SparsePooling already returns PoolOutput
         return SparsePooling(in_channels, ratio=ratio, act=nonlinearity)
-
     if pool in DENSE_POOLS:
-        k = _dense_cluster_size(avg_node_num, ratio)
-        assignment_pool = DenseGCNConv(in_channels, k) if pool == "diffpool" else Linear(in_channels, k)
-        return DensePoolAdapter(
-            assignment_pool,
-            pool,
-            nonlinearity=nonlinearity,
+        cluster_count = _dense_cluster_size(avg_node_num, ratio)
+        assignment = (
+            DenseGCNConv(in_channels, cluster_count)
+            if pool == "diffpool"
+            else Linear(in_channels, cluster_count)
         )
-
+        return DensePoolAdapter(assignment, pool)
     if ":" in pool:
         factory = _load_pool_factory(pool)
         custom_pool = factory(
@@ -162,9 +137,11 @@ def pool_resolver(
             avg_node_num=avg_node_num,
             nonlinearity=nonlinearity,
         )
-
-        # Custom pooling is expected to return PoolOutput directly.
-        # First-batch validation will catch contract violations.
+        if not isinstance(custom_pool, torch.nn.Module):
+            raise TypeError(
+                f"Custom pool factory '{pool}' must return torch.nn.Module, "
+                f"got {type(custom_pool).__name__}."
+            )
         return custom_pool
 
     raise ValueError(

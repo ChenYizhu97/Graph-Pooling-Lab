@@ -11,6 +11,7 @@ def build_case_manifest(
     datasets: list[str],
     model_types: list[str],
     pool_ratio: float,
+    pool_nonlinearity: str = "tanh",
     activation_checkpoint: bool = False,
     tag_prefix: Optional[str] = None,
     train_overrides: Optional[dict] = None,
@@ -31,7 +32,11 @@ def build_case_manifest(
                 job = normalize_train_job(
                     {
                         "dataset": dataset,
-                        "pool": {"name": pool, "ratio": pool_ratio},
+                        "pool": {
+                            "name": pool,
+                            "ratio": pool_ratio,
+                            "nonlinearity": pool_nonlinearity,
+                        },
                         "model": model_block,
                         "train": train_block,
                         "log_file": log_file,
@@ -44,6 +49,7 @@ def build_case_manifest(
                         "dataset": dataset,
                         "pool": pool,
                         "pool_ratio": pool_ratio,
+                        "pool_nonlinearity": pool_nonlinearity,
                         "activation_checkpoint": activation_checkpoint,
                         "model_type": model_type,
                         "job": job,
