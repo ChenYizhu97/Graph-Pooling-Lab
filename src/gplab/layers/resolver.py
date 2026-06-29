@@ -56,81 +56,86 @@ class _TopKPoolWrapper(torch.nn.Module):
         nonlinearity: Union[str, Callable],
     ) -> None:
         super().__init__()
-        self.pool = TopKPooling(
+        self.topk_pool = TopKPooling(
             in_channels,
             ratio=ratio,
             nonlinearity=nonlinearity,
         )
 
     def forward(self, x, edge_index, batch) -> PoolOutput:
-        x, edge_index, edge_attr, batch, perm, score = self.pool(
-            x=x,
-            edge_index=edge_index,
-            batch=batch,
-        )
+        (
+            pooled_x,
+            pooled_edge_index,
+            pooled_edge_attr,
+            pooled_batch,
+            perm,
+            score,
+        ) = self.topk_pool(x=x, edge_index=edge_index, batch=batch)
         return PoolOutput(
-            x=x,
-            edge_index=edge_index,
-            batch=batch,
-            edge_attr=edge_attr,
+            x=pooled_x,
+            edge_index=pooled_edge_index,
+            batch=pooled_batch,
+            edge_attr=pooled_edge_attr,
             perm=perm,
             score=score,
         )
 
     def reset_parameters(self) -> None:
-        self.pool.reset_parameters()
+        self.topk_pool.reset_parameters()
 
 
 class _ASAPoolWrapper(torch.nn.Module):
     def __init__(self, in_channels: int, ratio: float) -> None:
         super().__init__()
-        self.pool = ASAPooling(in_channels, ratio=ratio)
+        self.asa_pool = ASAPooling(in_channels, ratio=ratio)
 
     def forward(self, x, edge_index, batch) -> PoolOutput:
-        x, edge_index, edge_attr, batch, perm = self.pool(
-            x=x,
-            edge_index=edge_index,
-            batch=batch,
-        )
+        (
+            pooled_x,
+            pooled_edge_index,
+            pooled_edge_attr,
+            pooled_batch,
+            perm,
+        ) = self.asa_pool(x=x, edge_index=edge_index, batch=batch)
         return PoolOutput(
-            x=x,
-            edge_index=edge_index,
-            batch=batch,
-            edge_attr=edge_attr,
+            x=pooled_x,
+            edge_index=pooled_edge_index,
+            batch=pooled_batch,
+            edge_attr=pooled_edge_attr,
             perm=perm,
         )
 
     def reset_parameters(self) -> None:
-        self.pool.reset_parameters()
+        self.asa_pool.reset_parameters()
 
 
 def pool_resolver(
-    pool: Optional[str],
+    pool_name: Optional[str],
     in_channels: int,
     ratio: float = 0.5,
     avg_node_num: Optional[float] = None,
     nonlinearity: Union[str, Callable] = "tanh",
 ) -> Optional[torch.nn.Module]:
-    if pool in (None, "", "nopool"):
+    if pool_name in (None, "", "nopool"):
         return None
-    if pool == "topkpool":
+    if pool_name == "topkpool":
         return _TopKPoolWrapper(in_channels, ratio, nonlinearity)
-    if pool == "sagpool":
+    if pool_name == "sagpool":
         return SAGPooling(in_channels, ratio=ratio, nonlinearity=nonlinearity)
-    if pool == "asapool":
+    if pool_name == "asapool":
         return _ASAPoolWrapper(in_channels, ratio)
-    if pool == "sparsepool":
+    if pool_name == "sparsepool":
         return SparsePooling(in_channels, ratio=ratio, act=nonlinearity)
-    if pool in DENSE_POOLS:
+    if pool_name in DENSE_POOLS:
         cluster_count = _dense_cluster_size(avg_node_num, ratio)
-        assignment = (
+        assignment_layer = (
             DenseGCNConv(in_channels, cluster_count)
-            if pool == "diffpool"
+            if pool_name == "diffpool"
             else Linear(in_channels, cluster_count)
         )
-        return DensePoolAdapter(assignment, pool)
-    if ":" in pool:
-        factory = _load_pool_factory(pool)
+        return DensePoolAdapter(assignment_layer, pool_name)
+    if ":" in pool_name:
+        factory = _load_pool_factory(pool_name)
         custom_pool = factory(
             in_channels=in_channels,
             ratio=ratio,
@@ -139,13 +144,13 @@ def pool_resolver(
         )
         if not isinstance(custom_pool, torch.nn.Module):
             raise TypeError(
-                f"Custom pool factory '{pool}' must return torch.nn.Module, "
+                f"Custom pool factory '{pool_name}' must return torch.nn.Module, "
                 f"got {type(custom_pool).__name__}."
             )
         return custom_pool
 
     raise ValueError(
-        f"Unknown pooling method '{pool}'. "
+        f"Unknown pooling method '{pool_name}'. "
         f"Built-ins: {', '.join(BUILTIN_POOLS)}. "
         "Or provide a custom factory as '<python_module>:<factory_name>'."
     )

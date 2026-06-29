@@ -15,9 +15,9 @@ def read_jsonl(path: str) -> list[dict]:
     return [json.loads(line) for line in lines]
 
 
-def append_jsonl(path: str, obj: dict) -> None:
+def append_jsonl(path: str, record: dict) -> None:
     log_path = Path(path)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with open(log_path, "a", encoding="utf-8") as file_to_save:
-        file_to_save.write(json.dumps(obj))
+        file_to_save.write(json.dumps(record))
         file_to_save.write("\n")

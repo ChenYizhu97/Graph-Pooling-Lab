@@ -24,26 +24,31 @@ class CustomTopKPool(torch.nn.Module):
     """
     def __init__(self, in_channels: int, ratio: float = 0.5):
         super().__init__()
-        self.pool = TopKPooling(in_channels, ratio=ratio)
+        self.topk_pool = TopKPooling(in_channels, ratio=ratio)
     
     def forward(self, x, edge_index, batch):
         # Call the underlying pooling
-        x_out, edge_index_out, edge_attr_out, batch_out, perm, score = self.pool(
-            x=x, edge_index=edge_index, batch=batch
-        )
+        (
+            pooled_x,
+            pooled_edge_index,
+            pooled_edge_attr,
+            pooled_batch,
+            perm,
+            score,
+        ) = self.topk_pool(x=x, edge_index=edge_index, batch=batch)
         
         # Return PoolOutput - required contract
         return PoolOutput(
-            x=x_out,
-            edge_index=edge_index_out,
-            batch=batch_out,
-            edge_attr=edge_attr_out,
+            x=pooled_x,
+            edge_index=pooled_edge_index,
+            batch=pooled_batch,
+            edge_attr=pooled_edge_attr,
             perm=perm,
             score=score,
         )
     
     def reset_parameters(self):
-        self.pool.reset_parameters()
+        self.topk_pool.reset_parameters()
 
 
 def build_pool(

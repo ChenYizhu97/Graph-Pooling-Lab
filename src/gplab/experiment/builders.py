@@ -5,8 +5,8 @@ from gplab.experiment.spec import ExperimentSpec, ModelSpec, PoolSpec, TrainSpec
 
 def build_cli_spec(
     *,
-    model_conf: dict,
-    experiment_conf: dict,
+    model_config: dict,
+    experiment_config: dict,
     pool: Optional[str],
     pool_ratio: Optional[float],
     pool_nonlinearity: Optional[str],
@@ -20,16 +20,16 @@ def build_cli_spec(
     seed_list: Optional[list[int]],
     allow_duplicate_seeds: bool,
 ) -> ExperimentSpec:
-    if "model" not in model_conf:
+    if "model" not in model_config:
         raise ValueError("Missing [model] section in model config.")
-    if "experiment" not in experiment_conf:
+    if "experiment" not in experiment_config:
         raise ValueError("Missing [experiment] section in experiment config.")
 
-    raw_model = dict(model_conf["model"])
-    raw_model["variant"] = model_type or "sum"
+    model_section = dict(model_config["model"])
+    model_section["variant"] = model_type or "sum"
 
-    raw_train = dict(experiment_conf["experiment"])
-    raw_train.update(
+    train_section = dict(experiment_config["experiment"])
+    train_section.update(
         {
             "seed_mode": seed_mode,
             "seed_base": seed_base,
@@ -38,7 +38,7 @@ def build_cli_spec(
             "activation_checkpoint": bool(
                 activation_checkpoint
                 if activation_checkpoint is not None
-                else raw_train.get("activation_checkpoint", False)
+                else train_section.get("activation_checkpoint", False)
             ),
         }
     )
@@ -50,10 +50,10 @@ def build_cli_spec(
             ratio=float(pool_ratio if pool_ratio is not None else 0.5),
             nonlinearity=pool_nonlinearity or "tanh",
         ),
-        model=ModelSpec.from_mapping(raw_model),
+        model=ModelSpec.from_mapping(model_section),
         train=TrainSpec.from_mapping(
-            raw_train,
-            seeds_path=raw_train.get("seeds"),
+            train_section,
+            seeds_path=train_section.get("seeds"),
         ),
         log_file=log_file,
         tag=tag,

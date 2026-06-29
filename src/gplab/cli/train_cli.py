@@ -61,20 +61,25 @@ def main(
 ):
     output_format = validate_output_format(output_format)
     try:
-        model_conf = toml.load(model_config)
-        experiment_conf = toml.load(experiment_config)
-        exp = experiment_conf.get("experiment", {})
-        final_seed_mode, final_seed_base, final_allow_dup, final_seed_list = resolve_seed_options(
+        model_config_data = toml.load(model_config)
+        experiment_config_data = toml.load(experiment_config)
+        experiment_section = experiment_config_data.get("experiment", {})
+        (
+            resolved_seed_mode,
+            resolved_seed_base,
+            resolved_allow_duplicates,
+            resolved_seed_list,
+        ) = resolve_seed_options(
             seed_mode=seed_mode,
             seed_base=seed_base,
             seed_list=seed_list,
             allow_duplicate_seeds=allow_duplicate_seeds,
-            expr_conf=exp,
+            experiment_section=experiment_section,
         )
 
         spec = build_cli_spec(
-            model_conf=model_conf,
-            experiment_conf=experiment_conf,
+            model_config=model_config_data,
+            experiment_config=experiment_config_data,
             pool=pool,
             pool_ratio=pool_ratio,
             pool_nonlinearity=pool_nonlinearity,
@@ -83,10 +88,10 @@ def main(
             model_type=model_type,
             tag=tag,
             log_file=log_file,
-            seed_mode=final_seed_mode,
-            seed_base=final_seed_base,
-            seed_list=final_seed_list,
-            allow_duplicate_seeds=final_allow_dup,
+            seed_mode=resolved_seed_mode,
+            seed_base=resolved_seed_base,
+            seed_list=resolved_seed_list,
+            allow_duplicate_seeds=resolved_allow_duplicates,
         )
 
         payload = execute_train_request(spec, emit_text=output_format == "text")

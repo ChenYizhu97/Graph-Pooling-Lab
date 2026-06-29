@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Callable
 
 import torch
 from torch import Tensor
@@ -11,17 +11,6 @@ class EvaluationResult:
     accuracy: float
     classification_loss: float
     auxiliary_loss: float
-
-
-def _classification_and_auxiliary_loss(
-    loss_fn: Callable[[Tensor, Tensor], Tensor],
-    output: Tensor,
-    target: Tensor,
-    auxiliary_loss: Optional[Tensor],
-) -> tuple[Tensor, Tensor]:
-    classification_loss = loss_fn(output, target)
-    auxiliary = output.new_zeros(()) if auxiliary_loss is None else auxiliary_loss
-    return classification_loss, auxiliary
 
 
 def train_epoch(
@@ -39,13 +28,11 @@ def train_epoch(
         data = data.to(device)
         optimizer.zero_grad()
         output, auxiliary_loss = model(data)
-        classification_loss, auxiliary = _classification_and_auxiliary_loss(
-            loss_fn,
-            output,
-            data.y,
-            auxiliary_loss,
+        classification_loss = loss_fn(output, data.y)
+        aux_loss = (
+            output.new_zeros(()) if auxiliary_loss is None else auxiliary_loss
         )
-        loss = classification_loss + auxiliary
+        loss = classification_loss + aux_loss
         loss.backward()
         optimizer.step()
 
@@ -74,16 +61,14 @@ def evaluate_epoch(
     for data in loader:
         data = data.to(device)
         output, auxiliary_loss = model(data)
-        classification_loss, auxiliary = _classification_and_auxiliary_loss(
-            loss_fn,
-            output,
-            data.y,
-            auxiliary_loss,
+        classification_loss = loss_fn(output, data.y)
+        aux_loss = (
+            output.new_zeros(()) if auxiliary_loss is None else auxiliary_loss
         )
 
         batch_size = int(data.y.numel())
         weighted_classification_loss += float(classification_loss) * batch_size
-        weighted_auxiliary_loss += float(auxiliary) * batch_size
+        weighted_auxiliary_loss += float(aux_loss) * batch_size
         correct += int((output.argmax(dim=-1) == data.y).sum())
         sample_count += batch_size
 

@@ -72,7 +72,6 @@ Key modules:
 - `src/gplab/model/`: shared graph classifier backbone with `sum` and `plain` variants
 - `src/gplab/layers/resolver.py`: convolution resolver, pooling resolver, and custom plugin loading
 - `src/gplab/layers/pool/dense_pool_adapter.py`: dense-to-sparse bridge for dense pooling methods
-- `src/gplab/model/execution.py`: activation-checkpoint execution helper
 - `src/gplab/runtime.py`: runtime metadata and text-mode experiment presentation
 - `src/gplab/utils/`: shared registries, validation, and JSONL I/O
 
@@ -175,11 +174,14 @@ GPLab provides two classifier variants on the same backbone:
 - `sum`: read out graph representations both before and after pooling, then add them
 - `plain`: use only the post-pooling graph representation
 
-Both variants share the same main pipeline:
+Both variants share the same core transform path:
 
 ```text
 pre_gnn -> conv1 -> pool -> conv2 -> readout -> post_gnn
 ```
+
+The `sum` variant also computes a readout after `conv1` and before pooling,
+then adds it to the post-pooling readout before `post_gnn`.
 
 The default backbone configuration lives in `config/model.toml`.
 `pre_gnn` must end at `hidden_features`, and `post_gnn` must start at
@@ -205,8 +207,9 @@ Built-in sparse poolers default to `tanh`; dense assignment methods consume raw
 assignment logits according to their own implementations.
 
 Activation checkpointing can reduce GPU memory at the cost of extra
-recomputation during backpropagation. It applies to the model forward path for
-any pooling method and is useful when a run does not fit in GPU memory:
+recomputation during backpropagation. It applies to checkpointed model forward
+segments when gradients are enabled, for any pooling method, and is useful when
+a run does not fit in GPU memory:
 
 ```bash
 gplab-train --pool diffpool --pool-ratio 0.5 --dataset PROTEINS --activation-checkpoint

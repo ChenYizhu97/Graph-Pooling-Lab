@@ -16,7 +16,7 @@ from gplab.experiment.reproducibility import (
 from gplab.experiment.spec import ExperimentSpec, TrainSpec
 from gplab.model.classifier_plain import GraphClassifierPlain
 from gplab.model.classifier_sum import GraphClassifierSum
-from gplab.runtime import build_runtime_meta, print_expr_info, sep_c
+from gplab.runtime import build_runtime_meta, console_separator, print_experiment_info
 from gplab.train_loop import evaluate_epoch, train_epoch
 
 
@@ -135,7 +135,7 @@ def run_experiment(spec: ExperimentSpec, *, emit_text: bool = True) -> dict:
     runtime = build_runtime_meta(device)
 
     if emit_text:
-        print_expr_info(spec, device)
+        print_experiment_info(spec, device)
 
     dataset = load_dataset(spec.dataset)
     if len(dataset) == 0:
@@ -162,7 +162,7 @@ def run_experiment(spec: ExperimentSpec, *, emit_text: bool = True) -> dict:
             )
         )
         if emit_text and run_idx != spec.train.runs:
-            rprint(sep_c("-"))
+            rprint(console_separator("-"))
 
     record = build_record(
         spec,

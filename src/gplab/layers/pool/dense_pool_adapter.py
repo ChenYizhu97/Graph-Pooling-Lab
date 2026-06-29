@@ -1,5 +1,3 @@
-from typing import Optional
-
 import torch
 from torch import Tensor
 from torch_geometric.nn.dense import dense_diff_pool, dense_mincut_pool
@@ -11,9 +9,9 @@ from .contracts import PoolOutput
 
 
 class DensePoolAdapter(torch.nn.Module):
-    def __init__(self, pool: torch.nn.Module, pool_method: str) -> None:
+    def __init__(self, assignment_layer: torch.nn.Module, pool_method: str) -> None:
         super().__init__()
-        self.pool = pool
+        self.assignment_layer = assignment_layer
         self.pool_method = pool_method
         self.reset_parameters()
 
@@ -23,14 +21,36 @@ class DensePoolAdapter(torch.nn.Module):
         edge_index: Tensor,
         batch: Tensor,
     ) -> PoolOutput:
-        dense_x, mask, adj = self._to_dense_inputs(x, edge_index, batch)
-        assignment = self._compute_assignment(dense_x, adj, mask)
-        pooled_x, pooled_adj, aux_loss = self._apply_pooling(
-            dense_x,
-            adj,
-            assignment,
-            mask,
+        dense_x, mask = to_dense_batch(x, batch=batch)
+        adj = to_dense_adj(edge_index, batch)
+        assignment = (
+            self.assignment_layer(dense_x, adj, mask)
+            if self.pool_method == "diffpool"
+            else self.assignment_layer(dense_x)
         )
+
+        if self.pool_method == "mincutpool":
+            pooled_x, pooled_adj, mincut_loss, ortho_loss = dense_mincut_pool(
+                dense_x,
+                adj,
+                assignment,
+                mask,
+            )
+            aux_loss = 0.5 * mincut_loss + ortho_loss
+        elif self.pool_method == "diffpool":
+            pooled_x, pooled_adj, link_loss, ent_loss = dense_diff_pool(
+                dense_x,
+                adj,
+                assignment,
+                mask,
+            )
+            aux_loss = 0.1 * link_loss + 0.1 * ent_loss
+        elif self.pool_method == "densepool":
+            pooled_x, pooled_adj = dense_connect(dense_x, adj, assignment, mask)
+            aux_loss = None
+        else:
+            raise ValueError(f"Unsupported dense pooling method '{self.pool_method}'.")
+
         sparse_x, sparse_edge_index, sparse_batch, sparse_edge_weight = to_sparse_batch(
             pooled_x,
             pooled_adj,
@@ -44,68 +64,5 @@ class DensePoolAdapter(torch.nn.Module):
             aux_loss=aux_loss,
         )
 
-    def _to_dense_inputs(
-        self,
-        x: Tensor,
-        edge_index: Tensor,
-        batch: Tensor,
-    ) -> tuple[Tensor, Tensor, Tensor]:
-        dense_x, mask = to_dense_batch(x, batch=batch)
-        adj = to_dense_adj(edge_index, batch)
-        return dense_x, mask, adj
-
-    def _compute_assignment(self, x: Tensor, adj: Tensor, mask: Tensor) -> Tensor:
-        if self.pool_method == "diffpool":
-            return self.pool(x, adj, mask)
-        return self.pool(x)
-
-    def _apply_pooling(
-        self,
-        x: Tensor,
-        adj: Tensor,
-        assignment: Tensor,
-        mask: Tensor,
-    ) -> tuple[Tensor, Tensor, Optional[Tensor]]:
-        if self.pool_method == "mincutpool":
-            return self._apply_mincut_pool(x, adj, assignment, mask)
-        if self.pool_method == "diffpool":
-            return self._apply_diff_pool(x, adj, assignment, mask)
-        if self.pool_method == "densepool":
-            pooled_x, pooled_adj = dense_connect(x, adj, assignment, mask)
-            return pooled_x, pooled_adj, None
-        raise ValueError(f"Unsupported dense pooling method '{self.pool_method}'.")
-
-    def _apply_mincut_pool(
-        self,
-        x: Tensor,
-        adj: Tensor,
-        assignment: Tensor,
-        mask: Tensor,
-    ) -> tuple[Tensor, Tensor, Tensor]:
-        pooled_x, pooled_adj, mincut_loss, ortho_loss = dense_mincut_pool(
-            x,
-            adj,
-            assignment,
-            mask,
-        )
-        aux_loss = 0.5 * mincut_loss + ortho_loss
-        return pooled_x, pooled_adj, aux_loss
-
-    def _apply_diff_pool(
-        self,
-        x: Tensor,
-        adj: Tensor,
-        assignment: Tensor,
-        mask: Tensor,
-    ) -> tuple[Tensor, Tensor, Tensor]:
-        pooled_x, pooled_adj, link_loss, ent_loss = dense_diff_pool(
-            x,
-            adj,
-            assignment,
-            mask,
-        )
-        aux_loss = 0.1 * link_loss + 0.1 * ent_loss
-        return pooled_x, pooled_adj, aux_loss
-
     def reset_parameters(self) -> None:
-        self.pool.reset_parameters()
+        self.assignment_layer.reset_parameters()

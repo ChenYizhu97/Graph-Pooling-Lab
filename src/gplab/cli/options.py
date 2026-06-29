@@ -43,25 +43,29 @@ def resolve_seed_options(
     seed_base: Optional[int],
     seed_list: Optional[str],
     allow_duplicate_seeds: Optional[bool],
-    expr_conf: dict,
+    experiment_section: dict,
 ) -> tuple[str, int, bool, Optional[list[int]]]:
-    conf = expr_conf or {}
+    experiment_defaults = experiment_section or {}
     final_seed_list = parse_seed_list(seed_list)
 
     if final_seed_list is None:
-        conf_seed_list = conf.get("seed_list")
-        if conf_seed_list is not None:
-            if not isinstance(conf_seed_list, list):
+        configured_seed_list = experiment_defaults.get("seed_list")
+        if configured_seed_list is not None:
+            if not isinstance(configured_seed_list, list):
                 raise typer.BadParameter(
                     "experiment.seed_list in config must be a list of integers.",
                     param_hint="--seed-list",
                 )
             try:
-                final_seed_list = [normalize_config_seed(value) for value in conf_seed_list]
+                final_seed_list = [normalize_config_seed(value) for value in configured_seed_list]
             except ValueError as exc:
                 _raise_bad_parameter(exc, param_hint="--seed-list")
 
-    final_seed_mode = seed_mode if seed_mode is not None else conf.get("seed_mode", "auto")
+    final_seed_mode = (
+        seed_mode
+        if seed_mode is not None
+        else experiment_defaults.get("seed_mode", "auto")
+    )
     if final_seed_list is not None:
         final_seed_mode = "list"
     try:
@@ -69,13 +73,17 @@ def resolve_seed_options(
     except ValueError as exc:
         _raise_bad_parameter(exc, param_hint="--seed-mode")
 
-    final_seed_base = seed_base if seed_base is not None else conf.get("seed_base", 20260320)
+    final_seed_base = (
+        seed_base
+        if seed_base is not None
+        else experiment_defaults.get("seed_base", 20260320)
+    )
     if final_seed_base is None:
         final_seed_base = 20260320
 
-    final_allow_dup = allow_duplicate_seeds
-    if final_allow_dup is None:
-        final_allow_dup = conf.get("allow_duplicate_seeds", False)
-    final_allow_dup = bool(final_allow_dup)
+    allow_duplicates = allow_duplicate_seeds
+    if allow_duplicates is None:
+        allow_duplicates = experiment_defaults.get("allow_duplicate_seeds", False)
+    allow_duplicates = bool(allow_duplicates)
 
-    return final_seed_mode, int(final_seed_base), final_allow_dup, final_seed_list
+    return final_seed_mode, int(final_seed_base), allow_duplicates, final_seed_list

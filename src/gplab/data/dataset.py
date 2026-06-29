@@ -24,15 +24,15 @@ def build_split_indices(
         raise ValueError("train_ratio + val_ratio must be smaller than 1")
 
     rng = np.random.default_rng(seed)
-    rnd_idx = rng.permutation(dataset_size).tolist()
+    shuffled_indices = rng.permutation(dataset_size).tolist()
 
     train_end = int(train_ratio * dataset_size)
     val_end = int((train_ratio + val_ratio) * dataset_size)
 
     return {
-        "train": rnd_idx[:train_end],
-        "val": rnd_idx[train_end:val_end],
-        "test": rnd_idx[val_end:],
+        "train": shuffled_indices[:train_end],
+        "val": shuffled_indices[train_end:val_end],
+        "test": shuffled_indices[val_end:],
     }
 
 

@@ -58,15 +58,15 @@ def generate_loader(
     shuffle: bool = False,
     seed: int = 0,
 ) -> DataLoader:
-    g = torch.Generator()
-    g.manual_seed(seed)
+    generator = torch.Generator()
+    generator.manual_seed(seed)
     data_loader = DataLoader(
         dataset=dataset,
         batch_size=batch_size,
         shuffle=shuffle,
         num_workers=0,
         worker_init_fn=seed_worker,
-        generator=g,
+        generator=generator,
     )
     return data_loader
 

@@ -216,7 +216,7 @@ This file defines stable facts, approved tool surfaces, and execution rules for 
   - `--model-types`: comma-separated model variant list
   - `--pool-ratio`: pooling ratio for every case
   - `--pool-nonlinearity`: pooling score nonlinearity for every case
-  - `--activation-checkpoint`: use activation checkpointing for the model forward path when GPU memory is tight
+  - `--activation-checkpoint`: use activation checkpointing for checkpointed model forward segments when gradients are enabled and GPU memory is tight
   - optional train overrides: `--runs`, `--epochs`, `--patience`, `--lr`, `--batch-size`, `--train-ratio`, `--val-ratio`, `--seed-mode`, `--seed-base`, `--allow-duplicate-seeds`
   - optional routing fields: `--log-file`, `--tag-prefix`
 - Output:
