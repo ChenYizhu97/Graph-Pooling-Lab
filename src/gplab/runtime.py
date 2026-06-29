@@ -5,7 +5,8 @@ from datetime import datetime, timezone
 import torch
 from rich import print as rprint
 
-from gplab.experiment.spec import ExperimentSpec
+from gplab.benchmark.case import BenchmarkCase
+from gplab.benchmark.execution import ExecutionOptions
 
 try:
     import torch_geometric
@@ -14,7 +15,8 @@ except Exception:  # pragma: no cover - defensive
 
 
 def print_experiment_info(
-        spec: ExperimentSpec,
+        case: BenchmarkCase,
+        execution: ExecutionOptions,
         device: torch.device,
         file=sys.stderr
 ):
@@ -26,15 +28,11 @@ def print_experiment_info(
     message = "\n".join(
         [
             console_separator("="),
-            f"Experiments setting:\n{spec.train.to_mapping(include_seed_path=True)}",
+            f"Benchmark case:\n{case.to_mapping()}",
+            console_separator("-"),
+            f"Execution options:\n{execution.to_mapping()}",
             console_separator("-"),
             f"Device properties:\n{device_property}",
-            console_separator("-"),
-            f"Pooling setting:\n{spec.pool.to_mapping()}",
-            console_separator("-"),
-            f"Dataset:\n[green]{spec.dataset}[/green]",
-            console_separator("-"),
-            f"Model configuration:\n{spec.model.to_mapping()}",
             console_separator("="),
         ]
     )

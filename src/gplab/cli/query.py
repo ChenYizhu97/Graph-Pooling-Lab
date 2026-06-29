@@ -3,11 +3,16 @@ import shlex
 import typer
 from typing_extensions import Annotated, Optional
 
-from gplab.experiment.identity import compute_benchmark_key, require_record_id
+from gplab.benchmark.comparison import compute_record_benchmark_key
+from gplab.experiment.identity import require_record_id
 from gplab.experiment.record import summarize_record
 from gplab.cli.output import build_error_payload, emit_json, validate_output_format
 from gplab.utils.jsonl import read_jsonl
-from gplab.utils.validation import validate_dataset_value, validate_model_type_value, validate_pool_value
+from gplab.utils.validation import (
+    validate_dataset_value,
+    validate_model_variant_value,
+    validate_pool_value,
+)
 
 app = typer.Typer(pretty_exceptions_enable=False)
 
@@ -20,7 +25,7 @@ def _sort_value(record: dict, sort_by: str) -> float:
 def _rank_groups(records: list[dict], sort_by: str) -> list[tuple[str, list[dict]]]:
     groups: dict[str, list[dict]] = {}
     for record in records:
-        groups.setdefault(compute_benchmark_key(record), []).append(record)
+        groups.setdefault(compute_record_benchmark_key(record), []).append(record)
     return [
         (
             benchmark_key,
@@ -37,13 +42,19 @@ def _rank_groups(records: list[dict], sort_by: str) -> list[tuple[str, list[dict
 def _print_report(records: list[dict], sort_by: str) -> None:
     for benchmark_key, ranked in _rank_groups(records, sort_by):
         first = ranked[0]
-        spec = first["spec"]
-        tags = sorted({record.get("tag") for record in ranked if record.get("tag") is not None})
+        case = first["case"]
+        tags = sorted(
+            {
+                record["execution"].get("tag")
+                for record in ranked
+                if record["execution"].get("tag") is not None
+            }
+        )
         header_parts = [
-            f"dataset={spec['dataset']}",
-            f"model={spec['model']['variant']}",
-            f"ratio={spec['pool']['ratio']}",
-            f"pool_nonlinearity={spec['pool'].get('nonlinearity', 'tanh')}",
+            f"dataset={case['dataset']}",
+            f"model={case['model']['variant']}",
+            f"ratio={case['pool']['ratio']}",
+            f"pool_nonlinearity={case['pool']['nonlinearity']}",
             f"benchmark={benchmark_key}",
         ]
         if len(tags) == 1:
@@ -63,7 +74,7 @@ def _print_report(records: list[dict], sort_by: str) -> None:
             )
         print(
             "Interpretation: compare mean first, then use std for stability, avg_epoch for early-stop behavior, "
-            "and val_test_corr to judge whether lower validation loss really aligned with better test accuracy."
+            "and val_test_corr to judge whether lower validation loss aligned with better test accuracy."
         )
         print()
 
@@ -81,10 +92,10 @@ def _build_report_payload(records: list[dict], sort_by: str) -> dict:
         payload_groups.append(
             {
                 "benchmark_key": benchmark_key,
-                "dataset": first["spec"]["dataset"],
-                "model_type": first["spec"]["model"]["variant"],
-                "pool_ratio": first["spec"]["pool"]["ratio"],
-                "pool_nonlinearity": first["spec"]["pool"].get("nonlinearity", "tanh"),
+                "dataset": first["case"]["dataset"],
+                "model_variant": first["case"]["model"]["variant"],
+                "pool_ratio": first["case"]["pool"]["ratio"],
+                "pool_nonlinearity": first["case"]["pool"]["nonlinearity"],
                 "records": group_summaries,
             }
         )
@@ -101,11 +112,20 @@ def main(
     log_file: Annotated[str, typer.Option(..., help="JSONL log file to query.")],
     pool: Annotated[Optional[str], typer.Option()] = None,
     dataset: Annotated[Optional[str], typer.Option()] = None,
-    model_type: Annotated[Optional[str], typer.Option(help="Filter by model variant: sum or plain.")] = None,
-    tag: Annotated[Optional[str], typer.Option(help="Filter by experiment tag.")] = None,
-    report: Annotated[bool, typer.Option(help="Print grouped benchmark report instead of one summary dict per record.")] = False,
-    sort_by: Annotated[str, typer.Option(help="Report sort field: mean, std, avg_best_epoch, avg_val_loss.")] = "mean",
-    show_spec: Annotated[bool, typer.Option(help="Include the full spec block in default output.")] = False,
+    model_variant: Annotated[
+        Optional[str],
+        typer.Option(help="Filter by model variant: sum or plain."),
+    ] = None,
+    tag: Annotated[Optional[str], typer.Option(help="Filter by execution tag.")] = None,
+    report: Annotated[
+        bool,
+        typer.Option(help="Print grouped benchmark report instead of one summary dict per record."),
+    ] = False,
+    sort_by: Annotated[
+        str,
+        typer.Option(help="Report sort field: mean, std, avg_best_epoch, avg_val_loss."),
+    ] = "mean",
+    show_case: Annotated[bool, typer.Option(help="Include the full case block in default output.")] = False,
     show_replay: Annotated[bool, typer.Option(help="Show gplab-replay command for each matched record.")] = False,
     output_format: Annotated[str, typer.Option(help="Output format: text or json.")] = "text",
 ):
@@ -115,7 +135,7 @@ def main(
             raise typer.BadParameter(
                 "sort_by must be one of: mean, std, avg_best_epoch, avg_val_loss.",
                 param_hint="--sort-by",
-        )
+            )
 
         if dataset is not None:
             try:
@@ -127,22 +147,22 @@ def main(
                 validate_pool_value(pool)
             except ValueError as exc:
                 raise typer.BadParameter(str(exc), param_hint="--pool") from exc
-        if model_type is not None:
+        if model_variant is not None:
             try:
-                validate_model_type_value(model_type)
+                validate_model_variant_value(model_variant)
             except ValueError as exc:
-                raise typer.BadParameter(str(exc), param_hint="--model-type") from exc
+                raise typer.BadParameter(str(exc), param_hint="--model-variant") from exc
 
         records = []
         for record in (require_record_id(record) for record in read_jsonl(log_file)):
-            spec = record["spec"]
-            if dataset is not None and spec["dataset"].lower() != dataset.lower():
+            case = record["case"]
+            if dataset is not None and case["dataset"].lower() != dataset.lower():
                 continue
-            if pool is not None and spec["pool"]["name"] != pool:
+            if pool is not None and case["pool"]["name"] != pool:
                 continue
-            if tag is not None and record.get("tag") != tag:
+            if tag is not None and record["execution"].get("tag") != tag:
                 continue
-            if model_type is not None and spec["model"]["variant"] != model_type:
+            if model_variant is not None and case["model"]["variant"] != model_variant:
                 continue
             records.append(record)
 
@@ -156,8 +176,8 @@ def main(
         summaries = []
         for record in records:
             summary = summarize_record(record)
-            if show_spec:
-                summary["spec"] = record["spec"]
+            if show_case:
+                summary["case"] = record["case"]
             if show_replay:
                 summary["replay_command"] = (
                     f"gplab-replay --log-file {shlex.quote(log_file)} --record-id {record['record_id']}"

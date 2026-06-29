@@ -1,26 +1,28 @@
 from typing import Any, Optional
 
+from gplab.benchmark.case import BenchmarkCase
+from gplab.benchmark.execution import ExecutionOptions
 from gplab.experiment.execute import run_experiment
 from gplab.experiment.record import summarize_record
-from gplab.experiment.builders import build_job_spec
-from gplab.experiment.spec import ExperimentSpec
+from gplab.experiment.builders import build_job_request
 from gplab.utils.jsonl import append_jsonl
 
 
 def execute_train_request(
-    spec: ExperimentSpec,
+    case: BenchmarkCase,
+    execution: ExecutionOptions,
     *,
     emit_text: bool,
     request_details: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
-    record = run_experiment(spec, emit_text=emit_text)
-    if spec.log_file is not None:
-        append_jsonl(spec.log_file, record)
+    record = run_experiment(case, execution, emit_text=emit_text)
+    if execution.log_file is not None:
+        append_jsonl(execution.log_file, record)
 
     request_payload: dict[str, Any] = {}
     if request_details:
         request_payload.update(request_details)
-    request_payload.update(spec.request_metadata())
+    request_payload.update(execution.request_metadata())
 
     payload = {
         "ok": True,
@@ -44,8 +46,10 @@ def execute_train_job(
     emit_text: bool,
     request_details: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
+    case, execution = build_job_request(job)
     return execute_train_request(
-        build_job_spec(job),
+        case,
+        execution,
         emit_text=emit_text,
         request_details=request_details,
     )

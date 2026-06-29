@@ -5,15 +5,16 @@ from rich import print as rprint
 from torch_geometric.nn import summary
 from tqdm import tqdm
 
-from gplab.data.dataset import build_split_indices, load_dataset, split_dataset
+from gplab.data.dataset import load_dataset, split_dataset
+from gplab.benchmark.case import BenchmarkCase, TrainingConfig
+from gplab.benchmark.execution import ExecutionOptions
+from gplab.benchmark.plan import RunPlan
 from gplab.experiment.record import build_record
 from gplab.experiment.reproducibility import (
     configure_runtime_threads,
     generate_loader,
-    resolve_seeds,
     set_np_and_torch,
 )
-from gplab.experiment.spec import ExperimentSpec, TrainSpec
 from gplab.model.classifier_plain import GraphClassifierPlain
 from gplab.model.classifier_sum import GraphClassifierSum
 from gplab.runtime import build_runtime_meta, console_separator, print_experiment_info
@@ -21,44 +22,23 @@ from gplab.train_loop import evaluate_epoch, train_epoch
 
 
 def _build_model(
-    spec: ExperimentSpec,
+    case: BenchmarkCase,
+    execution: ExecutionOptions,
     dataset,
     avg_node_num: float,
     device: torch.device,
 ):
-    model_class = GraphClassifierPlain if spec.model.variant == "plain" else GraphClassifierSum
+    model_class = GraphClassifierPlain if case.model.variant == "plain" else GraphClassifierSum
     return model_class(
         dataset.num_node_features,
         dataset.num_classes,
-        pool_method=spec.pool.name,
-        ratio=spec.pool.ratio,
-        pool_nonlinearity=spec.pool.nonlinearity,
-        config=spec.model,
+        pool_method=case.pool.name,
+        ratio=case.pool.ratio,
+        pool_nonlinearity=case.pool.nonlinearity,
+        config=case.model,
         avg_node_num=avg_node_num,
-        activation_checkpoint=spec.train.activation_checkpoint,
+        activation_checkpoint=execution.activation_checkpoint,
     ).to(device)
-
-
-def _resolve_run_plan(spec: ExperimentSpec, dataset_size: int) -> tuple[list[int], list[dict]]:
-    train = spec.train
-    seeds = resolve_seeds(
-        runs=train.runs,
-        seed_mode=train.seed_mode,
-        seeds_path=train.seeds_path,
-        seed_base=train.seed_base,
-        seed_list=None if train.seed_list is None else list(train.seed_list),
-        allow_duplicate_seeds=train.allow_duplicate_seeds,
-    )
-    splits = [
-        build_split_indices(
-            dataset_size,
-            seed=seed,
-            train_ratio=train.train_ratio,
-            val_ratio=train.val_ratio,
-        )
-        for seed in seeds
-    ]
-    return seeds, splits
 
 
 def _execute_single_run(
@@ -67,7 +47,7 @@ def _execute_single_run(
     run_idx: int,
     run_seed: int,
     run_split: dict,
-    train: TrainSpec,
+    train: TrainingConfig,
     device: torch.device,
     *,
     show_progress: bool,
@@ -128,27 +108,32 @@ def _execute_single_run(
     }
 
 
-def run_experiment(spec: ExperimentSpec, *, emit_text: bool = True) -> dict:
+def run_experiment(
+    case: BenchmarkCase,
+    execution: ExecutionOptions,
+    *,
+    emit_text: bool = True,
+) -> dict:
     configure_runtime_threads()
     set_np_and_torch(0)
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     runtime = build_runtime_meta(device)
 
     if emit_text:
-        print_experiment_info(spec, device)
+        print_experiment_info(case, execution, device)
 
-    dataset = load_dataset(spec.dataset)
+    dataset = load_dataset(case.dataset)
     if len(dataset) == 0:
         raise ValueError("Loaded dataset is empty.")
 
     avg_node_num = sum(int(graph.num_nodes) for graph in dataset) / len(dataset)
-    model = _build_model(spec, dataset, avg_node_num, device)
+    model = _build_model(case, execution, dataset, avg_node_num, device)
     if emit_text:
         rprint(summary(model, data=dataset[0].to(device), leaf_module=None, max_depth=5))
 
-    seeds, split_indices = _resolve_run_plan(spec, len(dataset))
+    run_plan = RunPlan.build(case, len(dataset))
     run_records = []
-    for run_idx, (run_seed, run_split) in enumerate(zip(seeds, split_indices), start=1):
+    for run_idx, (run_seed, run_split) in enumerate(zip(run_plan.seeds, run_plan.splits), start=1):
         run_records.append(
             _execute_single_run(
                 model,
@@ -156,17 +141,18 @@ def run_experiment(spec: ExperimentSpec, *, emit_text: bool = True) -> dict:
                 run_idx=run_idx,
                 run_seed=run_seed,
                 run_split=run_split,
-                train=spec.train,
+                train=case.training,
                 device=device,
                 show_progress=emit_text,
             )
         )
-        if emit_text and run_idx != spec.train.runs:
+        if emit_text and run_idx != case.training.runs:
             rprint(console_separator("-"))
 
     record = build_record(
-        spec,
-        resolved_seeds=seeds,
+        case,
+        execution=execution,
+        run_plan=run_plan,
         runtime=runtime,
         run_records=run_records,
     )

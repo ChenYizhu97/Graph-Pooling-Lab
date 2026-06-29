@@ -1,11 +1,14 @@
 import numpy as np
 
-from gplab.experiment.identity import attach_record_id, compute_benchmark_key, require_record_id
-from gplab.experiment.spec import ExperimentSpec
+from gplab.benchmark.case import BenchmarkCase
+from gplab.benchmark.comparison import compute_record_benchmark_key
+from gplab.benchmark.execution import ExecutionOptions
+from gplab.benchmark.plan import RunPlan
+from gplab.experiment.identity import attach_record_id, require_record_id
 
 
-def build_spec(spec: ExperimentSpec, resolved_seeds: list[int]) -> dict:
-    return spec.to_record_spec(resolved_seeds)
+def build_case(case: BenchmarkCase) -> dict:
+    return case.to_mapping()
 
 
 def build_result(run_records: list[dict]) -> dict:
@@ -31,19 +34,20 @@ def build_result(run_records: list[dict]) -> dict:
 
 
 def build_record(
-    spec: ExperimentSpec,
+    case: BenchmarkCase,
     *,
-    resolved_seeds: list[int],
+    execution: ExecutionOptions,
+    run_plan: RunPlan,
     runtime: dict,
     run_records: list[dict],
 ) -> dict:
     record = {
-        "spec": build_spec(spec, resolved_seeds),
+        "case": build_case(case),
+        "execution": execution.to_mapping(),
+        "run_plan": run_plan.to_mapping(),
         "runtime": runtime,
         "result": build_result(run_records),
     }
-    if spec.tag is not None:
-        record["tag"] = spec.tag
     return attach_record_id(record)
 
 
@@ -64,13 +68,14 @@ def summarize_record(record: dict) -> dict:
 
     summary = {
         "record_id": ensured["record_id"],
-        "benchmark_key": compute_benchmark_key(ensured),
-        "dataset": ensured["spec"]["dataset"],
-        "pool": ensured["spec"]["pool"]["name"],
-        "pool_ratio": ensured["spec"]["pool"]["ratio"],
-        "pool_nonlinearity": ensured["spec"]["pool"].get("nonlinearity", "tanh"),
-        "activation_checkpoint": bool(ensured["spec"]["train"]["activation_checkpoint"]),
-        "model_type": ensured["spec"]["model"]["variant"],
+        "case_id": ensured["run_plan"]["case_id"],
+        "benchmark_key": compute_record_benchmark_key(ensured),
+        "dataset": ensured["case"]["dataset"],
+        "pool": ensured["case"]["pool"]["name"],
+        "pool_ratio": ensured["case"]["pool"]["ratio"],
+        "pool_nonlinearity": ensured["case"]["pool"]["nonlinearity"],
+        "activation_checkpoint": bool(ensured["execution"]["activation_checkpoint"]),
+        "model_variant": ensured["case"]["model"]["variant"],
         "runs": len(runs),
         "mean": float(ensured["result"]["mean"]),
         "std": float(ensured["result"]["std"]),
@@ -81,6 +86,6 @@ def summarize_record(record: dict) -> dict:
         "worst_test_acc": float(min(test_acc)),
         "val_loss_test_acc_corr": corr,
     }
-    if "tag" in ensured:
-        summary["tag"] = ensured["tag"]
+    if ensured["execution"].get("tag") is not None:
+        summary["tag"] = ensured["execution"]["tag"]
     return summary

@@ -43,30 +43,30 @@ def resolve_seed_options(
     seed_base: Optional[int],
     seed_list: Optional[str],
     allow_duplicate_seeds: Optional[bool],
-    experiment_section: dict,
+    seeds_section: dict,
 ) -> tuple[str, int, bool, Optional[list[int]]]:
-    experiment_defaults = experiment_section or {}
-    final_seed_list = parse_seed_list(seed_list)
+    seed_defaults = seeds_section or {}
+    final_seed_values = parse_seed_list(seed_list)
 
-    if final_seed_list is None:
-        configured_seed_list = experiment_defaults.get("seed_list")
-        if configured_seed_list is not None:
-            if not isinstance(configured_seed_list, list):
+    if final_seed_values is None:
+        configured_seed_values = seed_defaults.get("values")
+        if configured_seed_values is not None:
+            if not isinstance(configured_seed_values, list):
                 raise typer.BadParameter(
-                    "experiment.seed_list in config must be a list of integers.",
+                    "training.seeds.values in config must be a list of integers.",
                     param_hint="--seed-list",
                 )
             try:
-                final_seed_list = [normalize_config_seed(value) for value in configured_seed_list]
+                final_seed_values = [normalize_config_seed(value) for value in configured_seed_values]
             except ValueError as exc:
                 _raise_bad_parameter(exc, param_hint="--seed-list")
 
     final_seed_mode = (
         seed_mode
         if seed_mode is not None
-        else experiment_defaults.get("seed_mode", "auto")
+        else seed_defaults.get("mode", "auto")
     )
-    if final_seed_list is not None:
+    if final_seed_values is not None:
         final_seed_mode = "list"
     try:
         validate_seed_mode_value(final_seed_mode)
@@ -76,14 +76,14 @@ def resolve_seed_options(
     final_seed_base = (
         seed_base
         if seed_base is not None
-        else experiment_defaults.get("seed_base", 20260320)
+        else seed_defaults.get("base", 20260320)
     )
     if final_seed_base is None:
         final_seed_base = 20260320
 
     allow_duplicates = allow_duplicate_seeds
     if allow_duplicates is None:
-        allow_duplicates = experiment_defaults.get("allow_duplicate_seeds", False)
+        allow_duplicates = seed_defaults.get("allow_duplicates", False)
     allow_duplicates = bool(allow_duplicates)
 
-    return final_seed_mode, int(final_seed_base), allow_duplicates, final_seed_list
+    return final_seed_mode, int(final_seed_base), allow_duplicates, final_seed_values

@@ -37,15 +37,15 @@ LOG_FILE="${LOG_FILE:-}"
 TAG_PREFIX="${TAG_PREFIX:-smoke}"
 PYTHON_CMD="${PYTHON_CMD:-python3}"
 POOL_RATIO="${POOL_RATIO:-0.5}"
-MODEL_TYPE="${MODEL_TYPE:-sum}"
+MODEL_VARIANT="${MODEL_VARIANT:-sum}"
 RUNS="${RUNS:-1}"
 LR="${LR:-0.0005}"
 BATCH_SIZE="${BATCH_SIZE:-16}"
 PATIENCE="${PATIENCE:-0}"
 EPOCHS="${EPOCHS:-1}"
 SEED_BASE="${SEED_BASE:-20260320}"
-TRAIN_RATIO="${TRAIN_RATIO:-0.8}"
-VAL_RATIO="${VAL_RATIO:-0.1}"
+SPLIT_TRAIN="${SPLIT_TRAIN:-0.8}"
+SPLIT_VAL="${SPLIT_VAL:-0.1}"
 
 if [ -n "${POOLS:-}" ]; then
   # shellcheck disable=SC2206
@@ -76,7 +76,7 @@ join_by_comma() {
 POOLS_CSV="$(join_by_comma "${POOL_LIST[@]}")"
 DATASETS_CSV="$(join_by_comma "${DATASET_LIST[@]}")"
 
-cmd="$PYTHON_CMD -m gplab.cli.validate --pools \"$POOLS_CSV\" --datasets \"$DATASETS_CSV\" --model-type \"$MODEL_TYPE\" --pool-ratio \"$POOL_RATIO\" --runs \"$RUNS\" --epochs \"$EPOCHS\" --patience \"$PATIENCE\" --lr \"$LR\" --batch-size \"$BATCH_SIZE\" --train-ratio \"$TRAIN_RATIO\" --val-ratio \"$VAL_RATIO\" --seed-mode auto --seed-base \"$SEED_BASE\" --tag-prefix \"$TAG_PREFIX\" --output-format json"
+cmd="$PYTHON_CMD -m gplab.cli.validate --pools \"$POOLS_CSV\" --datasets \"$DATASETS_CSV\" --model-variant \"$MODEL_VARIANT\" --pool-ratio \"$POOL_RATIO\" --runs \"$RUNS\" --epochs \"$EPOCHS\" --patience \"$PATIENCE\" --lr \"$LR\" --batch-size \"$BATCH_SIZE\" --split-train \"$SPLIT_TRAIN\" --split-val \"$SPLIT_VAL\" --seed-mode auto --seed-base \"$SEED_BASE\" --tag-prefix \"$TAG_PREFIX\" --output-format json"
 if [ -n "$LOG_FILE" ]; then
   cmd="$cmd --log-file \"$LOG_FILE\""
 fi

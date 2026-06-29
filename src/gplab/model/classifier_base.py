@@ -10,7 +10,7 @@ from torch_geometric.nn import BatchNorm, LayerNorm, MLP
 from torch_geometric.nn.resolver import activation_resolver
 from torch.utils.checkpoint import checkpoint
 
-from gplab.experiment.spec import ModelSpec
+from gplab.benchmark.case import ModelConfig
 from gplab.layers.functional import readout
 from gplab.layers.pool.contracts import PoolOutput, validate_pool_output
 from gplab.layers.resolver import conv_resolver, pool_resolver
@@ -21,7 +21,7 @@ class GraphClassifierBase(torch.nn.Module, ABC):
         self,
         n_node_features: int,
         n_classes: int,
-        config: ModelSpec,
+        config: ModelConfig,
         pool_method: Optional[str] = None,
         ratio: float = 0.5,
         pool_nonlinearity: str = "tanh",
@@ -224,7 +224,7 @@ class GraphClassifierBase(torch.nn.Module, ABC):
             x = conv(x, edge_index)
         return self.nonlinearity(norm(x))
 
-    def _build_pre_gnn(self, config: ModelSpec) -> MLP:
+    def _build_pre_gnn(self, config: ModelConfig) -> MLP:
         return MLP(
             channel_list=[self.n_node_features, *config.pre_gnn],
             act=self.nonlinearity,
@@ -234,7 +234,7 @@ class GraphClassifierBase(torch.nn.Module, ABC):
             dropout=self.p_dropout,
         )
 
-    def _build_post_gnn(self, config: ModelSpec) -> MLP:
+    def _build_post_gnn(self, config: ModelConfig) -> MLP:
         channels = [*config.post_gnn, self.n_classes]
         bias = [True] * (len(channels) - 2) + [False]
         return MLP(

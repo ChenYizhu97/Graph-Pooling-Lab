@@ -1,5 +1,4 @@
 import random
-from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -71,70 +70,32 @@ def generate_loader(
     return data_loader
 
 
-def load_seeds(
-    seeds: str,
-    runs: int,
-) -> list[int]:
-    if runs <= 0:
-        return []
-
-    seed_path = Path(seeds)
-    seed_path.parent.mkdir(parents=True, exist_ok=True)
-    seed_path.touch(exist_ok=True)
-
-    raw_tokens = seed_path.read_text().split()
-    seed_values = [int(token) for token in raw_tokens]
-
-    if runs > len(seed_values):
-        # Keep generation deterministic so repeated bootstrap produces the same sequence.
-        # Generate a full deterministic sequence and append only the missing suffix.
-        rng = np.random.default_rng(0)
-        generated_full = rng.integers(1, 10**9, size=runs, endpoint=False).tolist()
-        generated = generated_full[len(seed_values):]
-        seed_values.extend(generated)
-        seed_path.write_text(" ".join(str(seed) for seed in seed_values) + "\n")
-
-    return seed_values[:runs]
-
-
 def resolve_seeds(
     runs: int,
     seed_mode: str = "auto",
-    seeds_path: Optional[str] = None,
     seed_base: int = 20260320,
-    seed_list: Optional[list[int]] = None,
+    seed_values: Optional[list[int]] = None,
     allow_duplicate_seeds: bool = False,
 ) -> list[int]:
     if runs <= 0:
         return []
 
-    if seed_mode not in {"auto", "file", "list"}:
-        raise ValueError("seed_mode must be 'auto', 'file', or 'list'.")
+    if seed_mode not in {"auto", "list"}:
+        raise ValueError("seed_mode must be 'auto' or 'list'.")
 
     if seed_mode == "list":
-        if seed_list is None:
-            raise ValueError("seed_list is required when seed_mode='list'.")
-        if len(seed_list) != runs:
+        if seed_values is None:
+            raise ValueError("seed_values is required when seed_mode='list'.")
+        if len(seed_values) != runs:
             raise ValueError(
-                f"seed_list length must equal runs. Got {len(seed_list)} seeds for runs={runs}."
+                f"seed_values length must equal runs. Got {len(seed_values)} seeds for runs={runs}."
             )
-        if (not allow_duplicate_seeds) and (len(set(seed_list)) != len(seed_list)):
+        if (not allow_duplicate_seeds) and (len(set(seed_values)) != len(seed_values)):
             raise ValueError(
                 "Duplicate seeds detected in list mode. "
                 "Set allow_duplicate_seeds=true only when intentionally replaying duplicate seeds."
             )
-        return [int(seed) for seed in seed_list]
-
-    if seed_mode == "file":
-        if seeds_path is None:
-            raise ValueError("seeds_path is required when seed_mode='file'.")
-        seed_values = load_seeds(seeds_path, runs)
-        if (not allow_duplicate_seeds) and (len(set(seed_values)) != len(seed_values)):
-            raise ValueError(
-                "Duplicate seeds detected in file mode. "
-                "Set allow_duplicate_seeds=true only when intentionally replaying duplicate seeds."
-            )
-        return seed_values
+        return [int(seed) for seed in seed_values]
 
     # Deterministic unique seed generation for reproducible multi-run stats.
     # We use a reproducible PRNG stream seeded by seed_base and probe until unique.

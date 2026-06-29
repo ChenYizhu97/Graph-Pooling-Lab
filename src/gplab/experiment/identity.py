@@ -1,6 +1,8 @@
 import hashlib
 import json
 
+from gplab.benchmark.comparison import compute_record_benchmark_key
+
 
 def compute_record_id(record: dict) -> str:
     payload = {key: value for key, value in record.items() if key != "record_id"}
@@ -20,16 +22,4 @@ def require_record_id(record: dict) -> dict:
 
 
 def compute_benchmark_key(record: dict) -> str:
-    spec = record["spec"]
-    train = {key: value for key, value in spec["train"].items() if key != "activation_checkpoint"}
-    payload = {
-        "dataset": spec["dataset"],
-        "model": spec["model"],
-        "pool_protocol": {
-            "ratio": spec["pool"]["ratio"],
-            "nonlinearity": spec["pool"].get("nonlinearity", "tanh"),
-        },
-        "train": train,
-    }
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha1(encoded).hexdigest()[:12]
+    return compute_record_benchmark_key(record)

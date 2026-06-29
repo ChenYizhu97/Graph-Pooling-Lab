@@ -15,7 +15,7 @@ app = typer.Typer(pretty_exceptions_enable=False)
 def main(
     pools: Annotated[str, typer.Option(help="Comma-separated pools to validate.")] = "sagpool,diffpool",
     datasets: Annotated[str, typer.Option(help="Comma-separated datasets to validate.")] = "MUTAG,PROTEINS",
-    model_type: Annotated[str, typer.Option(help="Model variant: sum or plain.")] = "sum",
+    model_variant: Annotated[str, typer.Option(help="Model variant: sum or plain.")] = "sum",
     pool_ratio: Annotated[float, typer.Option(help="Pooling ratio for all cases.")] = 0.5,
     pool_nonlinearity: Annotated[str, typer.Option(help="Pooling score nonlinearity.")] = "tanh",
     activation_checkpoint: Annotated[bool, typer.Option(help="Use activation checkpointing to reduce GPU memory at extra compute cost.")] = False,
@@ -24,8 +24,8 @@ def main(
     patience: Annotated[int, typer.Option(help="Patience per smoke case.")] = 0,
     lr: Annotated[float, typer.Option(help="Learning rate per smoke case.")] = 0.0005,
     batch_size: Annotated[int, typer.Option(help="Batch size per smoke case.")] = 16,
-    train_ratio: Annotated[float, typer.Option(help="Train split ratio.")] = 0.8,
-    val_ratio: Annotated[float, typer.Option(help="Validation split ratio.")] = 0.1,
+    split_train: Annotated[float, typer.Option(help="Train split ratio.")] = 0.8,
+    split_val: Annotated[float, typer.Option(help="Validation split ratio.")] = 0.1,
     log_file: Annotated[Optional[str], typer.Option(help="Optional JSONL file to append smoke records.")] = None,
     seed_mode: Annotated[Optional[str], typer.Option(help="Seed source mode override.")] = "auto",
     seed_base: Annotated[Optional[int], typer.Option(help="Seed base override.")] = 20260320,
@@ -37,32 +37,32 @@ def main(
     output_format = validate_output_format(output_format)
     try:
         parsed_seed_list = parse_seed_list(seed_list)
-        train_overrides = {
+        training_overrides = {
             "runs": runs,
             "lr": lr,
             "batch_size": batch_size,
             "patience": patience,
             "epochs": epochs,
-            "train_ratio": train_ratio,
-            "val_ratio": val_ratio,
+            "split_train": split_train,
+            "split_val": split_val,
             "seed_mode": seed_mode,
             "seed_base": seed_base,
             "allow_duplicate_seeds": allow_duplicate_seeds,
         }
         if parsed_seed_list is not None:
-            train_overrides["seed_list"] = parsed_seed_list
-            train_overrides["seed_mode"] = "list"
+            training_overrides["seed_list"] = parsed_seed_list
+            training_overrides["seed_mode"] = "list"
 
         planned_cases = build_case_manifest(
             pools=parse_csv_list(pools),
             datasets=parse_csv_list(datasets),
-            model_types=[model_type],
+            model_variants=[model_variant],
             pool_ratio=pool_ratio,
             pool_nonlinearity=pool_nonlinearity,
             activation_checkpoint=activation_checkpoint,
             tag_prefix=tag_prefix,
             log_file=log_file,
-            train_overrides=train_overrides,
+            training_overrides=training_overrides,
         )
         cases = []
         for planned_case in planned_cases:
@@ -85,7 +85,7 @@ def main(
                     "pool": pool,
                     "pool_nonlinearity": pool_nonlinearity,
                     "dataset": dataset,
-                    "model_type": model_type,
+                    "model_variant": model_variant,
                     "activation_checkpoint": activation_checkpoint,
                     "status": "ok",
                     "seconds": round(time.perf_counter() - start, 4),
@@ -100,7 +100,7 @@ def main(
                     "pool": pool,
                     "pool_nonlinearity": pool_nonlinearity,
                     "dataset": dataset,
-                    "model_type": model_type,
+                    "model_variant": model_variant,
                     "activation_checkpoint": activation_checkpoint,
                     "status": "failed",
                     "seconds": round(time.perf_counter() - start, 4),

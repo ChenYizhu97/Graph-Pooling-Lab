@@ -8,17 +8,26 @@ AUTOMATION_MODEL_DEFAULTS = {
     "variant": "sum",
 }
 
-AUTOMATION_TRAIN_DEFAULTS = {
+AUTOMATION_TRAINING_DEFAULTS = {
     "runs": 10,
     "lr": 0.0005,
     "batch_size": 32,
     "patience": 50,
     "epochs": 500,
-    "train_ratio": 0.8,
-    "val_ratio": 0.1,
-    "seed_mode": "auto",
-    "seed_base": 20260320,
-    "seed_list": None,
-    "allow_duplicate_seeds": False,
+    "split": {
+        "train": 0.8,
+        "val": 0.1,
+    },
+    "seeds": {
+        "mode": "auto",
+        "base": 20260320,
+        "values": None,
+        "allow_duplicates": False,
+    },
+}
+
+AUTOMATION_EXECUTION_DEFAULTS = {
+    "log_file": None,
+    "tag": None,
     "activation_checkpoint": False,
 }

@@ -1,13 +1,18 @@
-[experiment]
+[training]
 runs = 10
 lr = 0.0005
 batch_size = 32
 patience = 50
 epochs = 500
-seeds = "config/seeds"
-seed_mode = "auto"
-seed_base = 20260320
-allow_duplicate_seeds = false
+
+[training.split]
+train = 0.8
+val = 0.1
+
+[training.seeds]
+mode = "auto"
+base = 20260320
+allow_duplicates = false
+
+[execution]
 activation_checkpoint = false
-train_ratio = 0.8
-val_ratio = 0.1

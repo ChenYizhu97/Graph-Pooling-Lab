@@ -4,9 +4,10 @@ import torch
 import typer
 from typing_extensions import Annotated
 
+from gplab.benchmark.case import BenchmarkCase
+from gplab.benchmark.execution import ExecutionOptions
 from gplab.experiment.identity import require_record_id
 from gplab.experiment.record import summarize_record
-from gplab.experiment.spec import ExperimentSpec
 from gplab.experiment.train_result import execute_train_job
 from gplab.cli.output import build_error_payload, emit_json, validate_output_format
 from gplab.jobs import compute_train_job_case_id
@@ -17,7 +18,12 @@ app = typer.Typer(pretty_exceptions_enable=False)
 
 
 def _build_replay_job(record: dict, *, replay_log_file: str | None) -> dict:
-    return ExperimentSpec.from_record(record, log_file=replay_log_file).to_job()
+    case = BenchmarkCase.from_record(record)
+    execution = ExecutionOptions.from_record(record, log_file=replay_log_file)
+    return {
+        "case": case.to_mapping(),
+        "execution": execution.to_mapping(),
+    }
 
 
 def _compatibility_status(recorded: dict, current: dict) -> tuple[str, list[dict]]:
@@ -54,7 +60,10 @@ def _compatibility_status(recorded: dict, current: dict) -> tuple[str, list[dict
 def main(
     log_file: Annotated[str, typer.Option(..., help="JSONL log file containing the record to replay.")],
     record_id: Annotated[str, typer.Option(help="Record id of the JSONL entry to replay.")] = ...,
-    replay_log_file: Annotated[Optional[str], typer.Option(help="Optional JSONL file to append the replayed result to.")] = None,
+    replay_log_file: Annotated[
+        Optional[str],
+        typer.Option(help="Optional JSONL file to append the replayed result to."),
+    ] = None,
     run: Annotated[bool, typer.Option(help="Execute the replay in this process.")] = False,
     output_format: Annotated[str, typer.Option(help="Output format: text or json.")] = "text",
 ):
@@ -115,7 +124,7 @@ def main(
             return
 
         print(f"Replay record: {record['record_id']}")
-        print(f"Replay mode: in-process strict job")
+        print("Replay mode: in-process strict job")
         print(f"Replay job case_id: {replay_case_id}")
         if replay_log_file is not None:
             print(f"Replay log file: {replay_log_file}")

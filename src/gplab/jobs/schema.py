@@ -1,18 +1,22 @@
-import hashlib
-import json
 import math
 from typing import Optional
 
-from gplab.experiment.spec import ExperimentSpec
+from gplab.benchmark.case import BenchmarkCase
+from gplab.benchmark.comparison import compute_case_id
+from gplab.benchmark.execution import ExecutionOptions
 from gplab.utils.validation import validate_seed_mode_value
 
-from .defaults import AUTOMATION_MODEL_DEFAULTS, AUTOMATION_TRAIN_DEFAULTS
+from .defaults import AUTOMATION_EXECUTION_DEFAULTS, AUTOMATION_MODEL_DEFAULTS, AUTOMATION_TRAINING_DEFAULTS
 
 
-JOB_TOP_LEVEL_FIELDS = {"dataset", "pool", "model", "train", "log_file", "tag"}
-JOB_POOL_FIELDS = {"name", "ratio", "nonlinearity"}
-FULL_MODEL_FIELDS = set(AUTOMATION_MODEL_DEFAULTS)
-FULL_TRAIN_FIELDS = set(AUTOMATION_TRAIN_DEFAULTS)
+JOB_TOP_LEVEL_FIELDS = {"case", "execution"}
+CASE_FIELDS = {"dataset", "pool", "model", "training"}
+POOL_FIELDS = {"name", "ratio", "nonlinearity"}
+MODEL_FIELDS = set(AUTOMATION_MODEL_DEFAULTS)
+TRAINING_FIELDS = set(AUTOMATION_TRAINING_DEFAULTS)
+SPLIT_FIELDS = {"train", "val"}
+SEED_FIELDS = {"mode", "base", "values", "allow_duplicates"}
+EXECUTION_FIELDS = set(AUTOMATION_EXECUTION_DEFAULTS)
 
 
 def require_mapping(value, *, label: str) -> dict:
@@ -83,76 +87,109 @@ def normalize_train_job(job: dict) -> dict:
     _reject_unknown_fields(raw, allowed=JOB_TOP_LEVEL_FIELDS, label="top-level")
     _require_keys(raw, required=JOB_TOP_LEVEL_FIELDS, label="top-level")
 
-    pool = require_mapping(raw["pool"], label="pool")
-    _reject_unknown_fields(pool, allowed=JOB_POOL_FIELDS, label="pool")
-    _require_keys(pool, required=JOB_POOL_FIELDS, label="pool")
+    case = require_mapping(raw["case"], label="case")
+    _reject_unknown_fields(case, allowed=CASE_FIELDS, label="case")
+    _require_keys(case, required=CASE_FIELDS, label="case")
 
-    model = require_mapping(raw["model"], label="model")
-    _reject_unknown_fields(model, allowed=FULL_MODEL_FIELDS, label="model")
-    _require_keys(model, required=FULL_MODEL_FIELDS, label="model")
+    pool = require_mapping(case["pool"], label="case.pool")
+    _reject_unknown_fields(pool, allowed=POOL_FIELDS, label="case.pool")
+    _require_keys(pool, required=POOL_FIELDS, label="case.pool")
 
-    train = require_mapping(raw["train"], label="train")
-    _reject_unknown_fields(train, allowed=FULL_TRAIN_FIELDS, label="train")
-    _require_keys(train, required=FULL_TRAIN_FIELDS, label="train")
+    model = require_mapping(case["model"], label="case.model")
+    _reject_unknown_fields(model, allowed=MODEL_FIELDS, label="case.model")
+    _require_keys(model, required=MODEL_FIELDS, label="case.model")
+
+    training = require_mapping(case["training"], label="case.training")
+    _reject_unknown_fields(training, allowed=TRAINING_FIELDS, label="case.training")
+    _require_keys(training, required=TRAINING_FIELDS, label="case.training")
+
+    split = require_mapping(training["split"], label="case.training.split")
+    _reject_unknown_fields(split, allowed=SPLIT_FIELDS, label="case.training.split")
+    _require_keys(split, required=SPLIT_FIELDS, label="case.training.split")
+
+    seeds = require_mapping(training["seeds"], label="case.training.seeds")
+    _reject_unknown_fields(seeds, allowed=SEED_FIELDS, label="case.training.seeds")
+    _require_keys(seeds, required=SEED_FIELDS, label="case.training.seeds")
+
+    execution = require_mapping(raw["execution"], label="execution")
+    _reject_unknown_fields(execution, allowed=EXECUTION_FIELDS, label="execution")
+    _require_keys(execution, required=EXECUTION_FIELDS, label="execution")
 
     normalized = {
-        "dataset": _require_string(raw["dataset"], field_name="dataset"),
-        "pool": {
-            "name": _require_string(pool["name"], field_name="pool.name"),
-            "ratio": _normalize_float(pool["ratio"], field_name="pool.ratio"),
-            "nonlinearity": _require_string(
-                pool["nonlinearity"],
-                field_name="pool.nonlinearity",
-            ),
+        "case": {
+            "dataset": _require_string(case["dataset"], field_name="case.dataset"),
+            "pool": {
+                "name": _require_string(pool["name"], field_name="case.pool.name"),
+                "ratio": _normalize_float(pool["ratio"], field_name="case.pool.ratio"),
+                "nonlinearity": _require_string(
+                    pool["nonlinearity"],
+                    field_name="case.pool.nonlinearity",
+                ),
+            },
+            "model": {
+                "hidden_features": _normalize_int(
+                    model["hidden_features"],
+                    field_name="case.model.hidden_features",
+                ),
+                "nonlinearity": _require_string(
+                    model["nonlinearity"],
+                    field_name="case.model.nonlinearity",
+                ),
+                "p_dropout": _normalize_float(model["p_dropout"], field_name="case.model.p_dropout"),
+                "conv_layer": _require_string(model["conv_layer"], field_name="case.model.conv_layer"),
+                "pre_gnn": _normalize_int_list(model["pre_gnn"], field_name="case.model.pre_gnn"),
+                "post_gnn": _normalize_int_list(model["post_gnn"], field_name="case.model.post_gnn"),
+                "variant": _require_string(model["variant"], field_name="case.model.variant"),
+            },
+            "training": {
+                "runs": _normalize_int(training["runs"], field_name="case.training.runs"),
+                "lr": _normalize_float(training["lr"], field_name="case.training.lr"),
+                "batch_size": _normalize_int(
+                    training["batch_size"],
+                    field_name="case.training.batch_size",
+                ),
+                "patience": _normalize_int(training["patience"], field_name="case.training.patience"),
+                "epochs": _normalize_int(training["epochs"], field_name="case.training.epochs"),
+                "split": {
+                    "train": _normalize_float(split["train"], field_name="case.training.split.train"),
+                    "val": _normalize_float(split["val"], field_name="case.training.split.val"),
+                },
+                "seeds": {
+                    "mode": _require_string(seeds["mode"], field_name="case.training.seeds.mode"),
+                    "base": _normalize_int(seeds["base"], field_name="case.training.seeds.base"),
+                    "values": None
+                    if seeds["values"] is None
+                    else _normalize_int_list(
+                        seeds["values"],
+                        field_name="case.training.seeds.values",
+                        allow_empty=False,
+                    ),
+                    "allow_duplicates": _normalize_bool(
+                        seeds["allow_duplicates"],
+                        field_name="case.training.seeds.allow_duplicates",
+                    ),
+                },
+            },
         },
-        "model": {
-            "hidden_features": _normalize_int(
-                model["hidden_features"],
-                field_name="model.hidden_features",
-            ),
-            "nonlinearity": _require_string(model["nonlinearity"], field_name="model.nonlinearity"),
-            "p_dropout": _normalize_float(model["p_dropout"], field_name="model.p_dropout"),
-            "conv_layer": _require_string(model["conv_layer"], field_name="model.conv_layer"),
-            "pre_gnn": _normalize_int_list(model["pre_gnn"], field_name="model.pre_gnn"),
-            "post_gnn": _normalize_int_list(model["post_gnn"], field_name="model.post_gnn"),
-            "variant": _require_string(model["variant"], field_name="model.variant"),
-        },
-        "train": {
-            "runs": _normalize_int(train["runs"], field_name="train.runs"),
-            "lr": _normalize_float(train["lr"], field_name="train.lr"),
-            "batch_size": _normalize_int(train["batch_size"], field_name="train.batch_size"),
-            "patience": _normalize_int(train["patience"], field_name="train.patience"),
-            "epochs": _normalize_int(train["epochs"], field_name="train.epochs"),
-            "train_ratio": _normalize_float(train["train_ratio"], field_name="train.train_ratio"),
-            "val_ratio": _normalize_float(train["val_ratio"], field_name="train.val_ratio"),
-            "seed_mode": _require_string(train["seed_mode"], field_name="train.seed_mode"),
-            "seed_base": _normalize_int(train["seed_base"], field_name="train.seed_base"),
-            "seed_list": None
-            if train["seed_list"] is None
-            else _normalize_int_list(
-                train["seed_list"],
-                field_name="train.seed_list",
-                allow_empty=False,
-            ),
-            "allow_duplicate_seeds": _normalize_bool(
-                train["allow_duplicate_seeds"],
-                field_name="train.allow_duplicate_seeds",
-            ),
+        "execution": {
+            "log_file": _normalize_optional_string(execution["log_file"], field_name="execution.log_file"),
+            "tag": _normalize_optional_string(execution["tag"], field_name="execution.tag"),
             "activation_checkpoint": _normalize_bool(
-                train["activation_checkpoint"],
-                field_name="train.activation_checkpoint",
+                execution["activation_checkpoint"],
+                field_name="execution.activation_checkpoint",
             ),
         },
-        "log_file": _normalize_optional_string(raw["log_file"], field_name="log_file"),
-        "tag": _normalize_optional_string(raw["tag"], field_name="tag"),
     }
 
-    validate_seed_mode_value(normalized["train"]["seed_mode"], allowed=("auto", "list"))
-    return ExperimentSpec.from_job(normalized).to_job()
+    validate_seed_mode_value(normalized["case"]["training"]["seeds"]["mode"])
+    case_obj = BenchmarkCase.from_mapping(normalized["case"])
+    execution_obj = ExecutionOptions.from_mapping(normalized["execution"])
+    return {
+        "case": case_obj.to_mapping(),
+        "execution": execution_obj.to_mapping(),
+    }
 
 
 def compute_train_job_case_id(job: dict) -> str:
     normalized = normalize_train_job(job)
-    payload = {key: value for key, value in normalized.items() if key not in {"log_file", "tag"}}
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha1(encoded).hexdigest()[:12]
+    return compute_case_id(BenchmarkCase.from_mapping(normalized["case"]))
