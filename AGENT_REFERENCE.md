@@ -143,7 +143,8 @@ Records contain:
 - `runtime`
 - `result`
 
-`run_plan` contains `case_id`, resolved `seeds`, and concrete split indices.
+`run_plan` contains `case_id`, resolved `seeds`, and concrete `train` / `val` /
+`test` split indices.
 
 ### SUMMARY_FIELDS
 

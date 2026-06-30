@@ -27,7 +27,7 @@ flowchart LR
 
 `BenchmarkRequest` is the executable request wrapper around a `BenchmarkCase`
 and `ExecutionOptions`. `PreparedRun` adds the loaded dataset profile and
-resolved `RunPlan`.
+resolved `RunPlan` with concrete seeds and split indices.
 
 GPLab currently targets:
 

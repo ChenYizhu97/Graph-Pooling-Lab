@@ -3,17 +3,39 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from gplab.data.dataset import build_split_indices
-from gplab.experiment.reproducibility import resolve_seeds
 
 from .case import BenchmarkCase
 from .comparison import compute_case_id
+from .seeds import resolve_seeds
+
+
+@dataclass(frozen=True)
+class SplitIndices:
+    train: tuple[int, ...]
+    val: tuple[int, ...]
+    test: tuple[int, ...]
+
+    @classmethod
+    def from_mapping(cls, value: dict) -> SplitIndices:
+        return cls(
+            train=tuple(int(index) for index in value["train"]),
+            val=tuple(int(index) for index in value["val"]),
+            test=tuple(int(index) for index in value["test"]),
+        )
+
+    def to_mapping(self) -> dict:
+        return {
+            "train": [int(index) for index in self.train],
+            "val": [int(index) for index in self.val],
+            "test": [int(index) for index in self.test],
+        }
 
 
 @dataclass(frozen=True)
 class RunPlan:
     case_id: str
     seeds: tuple[int, ...]
-    splits: tuple[dict, ...]
+    splits: tuple[SplitIndices, ...]
 
     @classmethod
     def build(cls, case: BenchmarkCase, dataset_size: int) -> RunPlan:
@@ -27,11 +49,13 @@ class RunPlan:
             allow_duplicate_seeds=seed_policy.allow_duplicates,
         )
         splits = [
-            build_split_indices(
-                dataset_size,
-                seed=seed,
-                split_train=training.split.train,
-                split_val=training.split.val,
+            SplitIndices.from_mapping(
+                build_split_indices(
+                    dataset_size,
+                    seed=seed,
+                    split_train=training.split.train,
+                    split_val=training.split.val,
+                )
             )
             for seed in seeds
         ]
@@ -45,12 +69,5 @@ class RunPlan:
         return {
             "case_id": self.case_id,
             "seeds": [int(seed) for seed in self.seeds],
-            "splits": [
-                {
-                    "train": [int(index) for index in split["train"]],
-                    "val": [int(index) for index in split["val"]],
-                    "test": [int(index) for index in split["test"]],
-                }
-                for split in self.splits
-            ],
+            "splits": [split.to_mapping() for split in self.splits],
         }

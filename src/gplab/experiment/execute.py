@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 from gplab.data.dataset import load_dataset, split_dataset
 from gplab.benchmark.case import TrainingConfig
-from gplab.benchmark.plan import RunPlan
+from gplab.benchmark.plan import RunPlan, SplitIndices
 from gplab.benchmark.request import BenchmarkRequest
 from gplab.experiment.record import build_record
 from gplab.experiment.reproducibility import (
@@ -82,14 +82,14 @@ def _execute_single_run(
     dataset,
     run_idx: int,
     run_seed: int,
-    run_split: dict,
+    run_split: SplitIndices,
     train: TrainingConfig,
     device: torch.device,
     *,
     show_progress: bool,
 ) -> dict:
     set_np_and_torch(run_seed)
-    train_dataset, val_dataset, test_dataset = split_dataset(dataset, run_split)
+    train_dataset, val_dataset, test_dataset = split_dataset(dataset, run_split.to_mapping())
 
     train_loader = generate_loader(train_dataset, train.batch_size, shuffle=True, seed=run_seed)
     val_loader = generate_loader(val_dataset, train.batch_size, shuffle=False, seed=run_seed)
