@@ -10,7 +10,10 @@ clients should also read [AGENT_REFERENCE.md](AGENT_REFERENCE.md).
 
 ```mermaid
 flowchart LR
-    A["BenchmarkRequest"] --> B["PreparedRun"]
+    CLI["CLI / TOML"] --> A["BenchmarkRequest"]
+    JOB["Strict Job JSON"] --> A
+    REC["ExperimentRecord replay"] --> A
+    A --> B["PreparedRun"]
     B --> C["Shared Graph Classifier"]
     C --> D{"Pooling"}
     D --> E["Sparse Poolers"]
@@ -21,6 +24,7 @@ flowchart LR
     H --> I["ExperimentRecord"]
     I --> J["gplab-query"]
     I --> K["gplab-replay"]
+    K --> REC
 ```
 
 ## Scope
@@ -28,6 +32,16 @@ flowchart LR
 `BenchmarkRequest` is the executable request wrapper around a `BenchmarkCase`
 and `ExecutionOptions`. `PreparedRun` adds the loaded dataset profile and
 resolved `RunPlan` with concrete seeds and split indices.
+
+All executable entrypoints adapt into the same request object first:
+
+- human CLI / TOML options build a `BenchmarkRequest`
+- strict Job JSON validates into a `BenchmarkRequest`
+- replay rebuilds a `BenchmarkRequest` from an `ExperimentRecord`
+
+`request.case_id` identifies the benchmark-defining case. `request.to_mapping()`
+is used only when GPLab needs to print a request-shaped JSON payload, such as a
+generated case manifest or replay job.
 
 GPLab currently targets:
 
@@ -99,7 +113,8 @@ gplab-train \
 ## Strict Job JSON
 
 Machine-facing execution uses a complete JSON object with `case` and
-`execution` blocks:
+`execution` blocks. This is the agent-facing request format; GPLab validates it
+into `BenchmarkRequest` before execution.
 
 ```json
 {
@@ -145,21 +160,18 @@ Machine-facing execution uses a complete JSON object with `case` and
 }
 ```
 
-Normalize without running:
-
-```bash
-gplab-normalize-job --job-file job.json --output-format json
-```
-
 Run the job:
 
 ```bash
 gplab-run-job --job-file job.json --output-format json
 ```
 
+`gplab-run-job` validates the job before execution. With `--output-format json`,
+invalid jobs return `ok=false`, `kind="job_error"`, `error.type="config_error"`,
+and a field-specific message for the agent to fix and retry.
+
 ## Automation Entrypoints
 
-- `gplab-normalize-job`: validate one strict job.
 - `gplab-expand-cases`: generate complete jobs from combinations.
 - `gplab-run-job`: execute one strict job.
 - `gplab-query`: summarize JSONL records.
@@ -245,6 +257,10 @@ Each JSONL record contains:
 - `runtime`: environment metadata
 - `result`: per-run and aggregate metrics
 - `record_id`: content hash
+
+Records are the persisted experiment output. Replay uses the stored `case`,
+`execution`, and resolved `run_plan.seeds` to rebuild an exact request with
+`case.training.seeds.mode="list"`.
 
 Query records:
 

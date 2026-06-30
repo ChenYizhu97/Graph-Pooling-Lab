@@ -3,7 +3,7 @@ import typer
 from typing_extensions import Annotated, Optional
 
 from gplab.cli.options import resolve_seed_options
-from gplab.experiment.builders import build_cli_request
+from gplab.cli.request import build_cli_request
 from gplab.experiment.train_result import execute_train_request
 from gplab.paths import default_config_path
 from gplab.cli.output import build_error_payload, emit_json, validate_output_format

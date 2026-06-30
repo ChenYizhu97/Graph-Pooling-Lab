@@ -1,9 +1,6 @@
 import math
 from typing import Optional
 
-from gplab.benchmark.case import BenchmarkCase
-from gplab.benchmark.execution import ExecutionOptions
-from gplab.benchmark.request import BenchmarkRequest
 from gplab.utils.validation import validate_seed_mode_value
 
 from .defaults import AUTOMATION_EXECUTION_DEFAULTS, AUTOMATION_MODEL_DEFAULTS, AUTOMATION_TRAINING_DEFAULTS
@@ -82,7 +79,7 @@ def _normalize_float(value, *, field_name: str) -> float:
     return normalized
 
 
-def normalize_train_job(job: dict) -> dict:
+def normalize_job_shape(job: dict) -> dict:
     raw = require_mapping(job, label="job")
     _reject_unknown_fields(raw, allowed=JOB_TOP_LEVEL_FIELDS, label="top-level")
     _require_keys(raw, required=JOB_TOP_LEVEL_FIELDS, label="top-level")
@@ -182,12 +179,4 @@ def normalize_train_job(job: dict) -> dict:
     }
 
     validate_seed_mode_value(normalized["case"]["training"]["seeds"]["mode"])
-    return BenchmarkRequest(
-        case=BenchmarkCase.from_mapping(normalized["case"]),
-        execution=ExecutionOptions.from_mapping(normalized["execution"]),
-    ).to_mapping()
-
-
-def compute_train_job_case_id(job: dict) -> str:
-    normalized = normalize_train_job(job)
-    return BenchmarkRequest.from_mapping(normalized).case_id
+    return normalized

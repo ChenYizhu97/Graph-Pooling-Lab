@@ -2,7 +2,7 @@ from copy import deepcopy
 from typing import Optional
 
 from .defaults import AUTOMATION_EXECUTION_DEFAULTS, AUTOMATION_MODEL_DEFAULTS, AUTOMATION_TRAINING_DEFAULTS
-from .schema import compute_train_job_case_id, normalize_train_job
+from .request import request_from_job
 
 
 def _apply_training_overrides(training_block: dict, overrides: dict) -> None:
@@ -53,7 +53,7 @@ def build_case_manifest(
                     f"{tag_prefix}_{pool}_{dataset}_{model_variant}" if tag_prefix else None
                 )
 
-                job = normalize_train_job(
+                request = request_from_job(
                     {
                         "case": {
                             "dataset": dataset,
@@ -70,14 +70,14 @@ def build_case_manifest(
                 )
                 manifest.append(
                     {
-                        "case_id": compute_train_job_case_id(job),
+                        "case_id": request.case_id,
                         "dataset": dataset,
                         "pool": pool,
                         "pool_ratio": pool_ratio,
                         "pool_nonlinearity": pool_nonlinearity,
                         "activation_checkpoint": activation_checkpoint,
                         "model_variant": model_variant,
-                        "job": job,
+                        "job": request.to_mapping(),
                     }
                 )
     return manifest

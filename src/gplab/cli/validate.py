@@ -5,8 +5,8 @@ from typing_extensions import Annotated, Optional
 
 from gplab.cli.options import parse_csv_list, parse_seed_list
 from gplab.cli.output import build_error_payload, emit_json, validate_output_format
-from gplab.experiment.train_result import execute_train_job
-from gplab.jobs import build_case_manifest
+from gplab.experiment.train_result import execute_train_request
+from gplab.jobs import build_case_manifest, request_from_job
 
 app = typer.Typer(pretty_exceptions_enable=False)
 
@@ -71,13 +71,14 @@ def main(
             case_id = planned_case["case_id"]
             start = time.perf_counter()
             try:
-                run_payload = execute_train_job(
-                    planned_case["job"],
+                request = request_from_job(planned_case["job"])
+                run_payload = execute_train_request(
+                    request,
                     emit_text=False,
                     request_details={
                         "mode": "validation",
                         "job_case_id": case_id,
-                        "normalized_job": planned_case["job"],
+                        "job": planned_case["job"],
                     },
                 )
                 case = {

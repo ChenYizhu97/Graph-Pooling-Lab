@@ -3,7 +3,6 @@ from typing import Any, Optional
 from gplab.benchmark.request import BenchmarkRequest
 from gplab.experiment.execute import run_experiment
 from gplab.experiment.record import summarize_record
-from gplab.experiment.builders import build_job_request
 from gplab.utils.jsonl import append_jsonl
 
 
@@ -36,16 +35,3 @@ def execute_train_request(
             f"record_id={summary['record_id']}"
         )
     return payload
-
-
-def execute_train_job(
-    job: dict,
-    *,
-    emit_text: bool,
-    request_details: Optional[dict[str, Any]] = None,
-) -> dict[str, Any]:
-    return execute_train_request(
-        build_job_request(job),
-        emit_text=emit_text,
-        request_details=request_details,
-    )

@@ -7,17 +7,12 @@ from typing_extensions import Annotated
 from gplab.benchmark.request import BenchmarkRequest
 from gplab.experiment.identity import require_record_id
 from gplab.experiment.record import summarize_record
-from gplab.experiment.train_result import execute_train_job
+from gplab.experiment.train_result import execute_train_request
 from gplab.cli.output import build_error_payload, emit_json, validate_output_format
-from gplab.jobs import compute_train_job_case_id
 from gplab.runtime import build_runtime_meta
 from gplab.utils.jsonl import read_jsonl
 
 app = typer.Typer(pretty_exceptions_enable=False)
-
-
-def _build_replay_request(record: dict, *, replay_log_file: str | None) -> BenchmarkRequest:
-    return BenchmarkRequest.from_record_for_replay(record, replay_log_file=replay_log_file)
 
 
 def _compatibility_status(recorded: dict, current: dict) -> tuple[str, list[dict]]:
@@ -70,9 +65,10 @@ def main(
                 f"record_id '{record_id}' was not found in the selected log file.",
                 param_hint="--record-id",
             )
-        replay_request = _build_replay_request(record, replay_log_file=replay_log_file)
+        replay_request = BenchmarkRequest.from_record_for_replay(record, replay_log_file=replay_log_file)
         replay_job = replay_request.to_mapping()
-        replay_case_id = compute_train_job_case_id(replay_job)
+        source_case_id = record["run_plan"]["case_id"]
+        replay_case_id = replay_request.case_id
 
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         current_runtime = build_runtime_meta(device)
@@ -85,6 +81,7 @@ def main(
             "execution": {
                 "mode": "in_process_strict_job",
                 "case_id": replay_case_id,
+                "source_case_id": source_case_id,
             },
             "paths": {
                 "replay_log_file": replay_log_file,
@@ -97,14 +94,15 @@ def main(
 
         if output_format == "json":
             if run:
-                run_payload = execute_train_job(
-                    replay_job,
+                run_payload = execute_train_request(
+                    replay_request,
                     emit_text=False,
                     request_details={
                         "mode": "replay",
                         "source_record_id": record["record_id"],
+                        "source_case_id": source_case_id,
                         "job_case_id": replay_case_id,
-                        "normalized_job": replay_job,
+                        "job": replay_job,
                     },
                 )
                 replay_payload["rerun"] = {
@@ -120,6 +118,7 @@ def main(
 
         print(f"Replay record: {record['record_id']}")
         print("Replay mode: in-process strict job")
+        print(f"Source case_id: {source_case_id}")
         print(f"Replay job case_id: {replay_case_id}")
         if replay_log_file is not None:
             print(f"Replay log file: {replay_log_file}")
@@ -132,14 +131,15 @@ def main(
                     print(f"  - {item['field']}: recorded={item['recorded']!r}, current={item['current']!r}")
 
         if run:
-            run_payload = execute_train_job(
-                replay_job,
+            run_payload = execute_train_request(
+                replay_request,
                 emit_text=True,
                 request_details={
                     "mode": "replay",
                     "source_record_id": record["record_id"],
+                    "source_case_id": source_case_id,
                     "job_case_id": replay_case_id,
-                    "normalized_job": replay_job,
+                    "job": replay_job,
                 },
             )
             print(f"Rerun record_id: {run_payload['summary']['record_id']}")

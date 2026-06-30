@@ -81,7 +81,3 @@ def build_cli_request(
         ),
     )
     return BenchmarkRequest(case=case, execution=execution)
-
-
-def build_job_request(job: dict) -> BenchmarkRequest:
-    return BenchmarkRequest.from_mapping(job)

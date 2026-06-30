@@ -22,7 +22,6 @@ dependencies = [
 [project.scripts]
 gplab-train = "gplab.cli.train_cli:app"
 gplab-run-job = "gplab.cli.run_train_job:app"
-gplab-normalize-job = "gplab.cli.normalize_train_job:app"
 gplab-expand-cases = "gplab.cli.expand_cases:app"
 gplab-query = "gplab.cli.query:app"
 gplab-replay = "gplab.cli.replay:app"

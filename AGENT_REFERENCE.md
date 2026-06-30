@@ -11,7 +11,7 @@ rules live in [PROTOCOL.md](PROTOCOL.md).
 
 ### AUTOMATION_ENTRYPOINTS
 
-`["gplab-run-job", "gplab-normalize-job", "gplab-expand-cases", "gplab-query", "gplab-replay", "gplab-validate"]`
+`["gplab-run-job", "gplab-expand-cases", "gplab-query", "gplab-replay", "gplab-validate"]`
 
 ### SUPPORTED_DATASETS
 
@@ -35,6 +35,19 @@ BenchmarkRequest = BenchmarkCase + ExecutionOptions
 
 `BenchmarkCase` contains only benchmark-defining fields. `ExecutionOptions`
 contains `log_file`, `tag`, and `activation_checkpoint`.
+
+Executable requests enter through one of three adapters:
+
+```text
+CLI / TOML options -> BenchmarkRequest
+Strict Job JSON   -> BenchmarkRequest
+ExperimentRecord  -> BenchmarkRequest
+```
+
+Use strict Job JSON for agent-driven execution. Use records only as persisted
+experiment output or as replay input. `BenchmarkRequest.to_mapping()` is the
+strict Job JSON projection used by manifest and replay output, and
+`BenchmarkRequest.case_id` is the stable case identifier.
 
 ### STRICT_JOB_SCHEMA
 
@@ -134,7 +147,8 @@ Example:
 
 ### RECORD_SCHEMA
 
-Records contain:
+Records are append-only JSONL entries produced by executed requests. They
+contain:
 
 - `record_id`
 - `case`
@@ -145,6 +159,10 @@ Records contain:
 
 `run_plan` contains `case_id`, resolved `seeds`, and concrete `train` / `val` /
 `test` split indices.
+
+Replay rebuilds a request from `case`, `execution`, and `run_plan.seeds`; the
+replay job uses `case.training.seeds.mode="list"`. A replay result reports both
+the source record case id and the replay job case id.
 
 ### SUMMARY_FIELDS
 
@@ -174,15 +192,17 @@ Query summaries include:
 
 ## Tools
 
-### gplab-normalize-job
+Recommended agent workflow:
 
-Validate one strict job:
-
-```bash
-gplab-normalize-job --job-file <path> --output-format json
+```text
+agent writes job.json -> gplab-run-job -> gplab-query
+                                  \
+                                   -> gplab-replay
 ```
 
-Output kind: `normalized_job`.
+`gplab-run-job` is also the validation boundary. If the job is invalid, it exits
+non-zero and returns `ok=false` with `error.type="config_error"` and a
+field-specific `error.message`.
 
 ### gplab-expand-cases
 
@@ -225,7 +245,25 @@ Execute one strict job:
 gplab-run-job --job-file <path> --output-format json
 ```
 
-Output kind: `train_result`.
+Output kind: `train_result` on success. Invalid jobs return kind
+`job_error`.
+
+Invalid job response shape:
+
+```json
+{
+  "ok": false,
+  "kind": "job_error",
+  "error": {
+    "type": "config_error",
+    "message": "Missing required case.training field(s): seeds.",
+    "details": {
+      "job_file": "job.json",
+      "mode": "job_json"
+    }
+  }
+}
+```
 
 ### gplab-query
 
