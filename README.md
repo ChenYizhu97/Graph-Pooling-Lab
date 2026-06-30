@@ -42,7 +42,7 @@ It is a benchmark harness, not a general-purpose graph learning framework.
 
 ```text
 src/gplab/
-  benchmark/      # BenchmarkCase, protocol constants, RunPlan, comparison keys
+  benchmark/      # BenchmarkCase, BenchmarkRequest, RunPlan, comparison keys
   cli/            # gplab-* entrypoints
   data/           # TU loading and split helpers
   experiment/     # execution, record, result assembly
