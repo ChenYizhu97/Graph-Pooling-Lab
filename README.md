@@ -10,7 +10,7 @@ clients should also read [AGENT_REFERENCE.md](AGENT_REFERENCE.md).
 
 ```mermaid
 flowchart LR
-    A["BenchmarkCase"] --> B["RunPlan"]
+    A["BenchmarkRequest"] --> B["PreparedRun"]
     B --> C["Shared Graph Classifier"]
     C --> D{"Pooling"}
     D --> E["Sparse Poolers"]
@@ -24,6 +24,10 @@ flowchart LR
 ```
 
 ## Scope
+
+`BenchmarkRequest` is the executable request wrapper around a `BenchmarkCase`
+and `ExecutionOptions`. `PreparedRun` adds the loaded dataset profile and
+resolved `RunPlan`.
 
 GPLab currently targets:
 

@@ -9,6 +9,7 @@ from gplab.benchmark.case import (
     TrainingConfig,
 )
 from gplab.benchmark.execution import ExecutionOptions
+from gplab.benchmark.request import BenchmarkRequest
 
 
 def build_cli_request(
@@ -30,7 +31,7 @@ def build_cli_request(
     allow_duplicate_seeds: bool,
     split_train: Optional[float],
     split_val: Optional[float],
-) -> tuple[BenchmarkCase, ExecutionOptions]:
+) -> BenchmarkRequest:
     if "model" not in model_config:
         raise ValueError("Missing [model] section in model config.")
     if "training" not in training_config:
@@ -79,8 +80,8 @@ def build_cli_request(
             else execution_defaults.get("activation_checkpoint", False)
         ),
     )
-    return case, execution
+    return BenchmarkRequest(case=case, execution=execution)
 
 
-def build_job_request(job: dict) -> tuple[BenchmarkCase, ExecutionOptions]:
-    return BenchmarkCase.from_mapping(job["case"]), ExecutionOptions.from_mapping(job["execution"])
+def build_job_request(job: dict) -> BenchmarkRequest:
+    return BenchmarkRequest.from_mapping(job)

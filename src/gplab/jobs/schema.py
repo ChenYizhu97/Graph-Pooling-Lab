@@ -2,8 +2,8 @@ import math
 from typing import Optional
 
 from gplab.benchmark.case import BenchmarkCase
-from gplab.benchmark.comparison import compute_case_id
 from gplab.benchmark.execution import ExecutionOptions
+from gplab.benchmark.request import BenchmarkRequest
 from gplab.utils.validation import validate_seed_mode_value
 
 from .defaults import AUTOMATION_EXECUTION_DEFAULTS, AUTOMATION_MODEL_DEFAULTS, AUTOMATION_TRAINING_DEFAULTS
@@ -182,14 +182,12 @@ def normalize_train_job(job: dict) -> dict:
     }
 
     validate_seed_mode_value(normalized["case"]["training"]["seeds"]["mode"])
-    case_obj = BenchmarkCase.from_mapping(normalized["case"])
-    execution_obj = ExecutionOptions.from_mapping(normalized["execution"])
-    return {
-        "case": case_obj.to_mapping(),
-        "execution": execution_obj.to_mapping(),
-    }
+    return BenchmarkRequest(
+        case=BenchmarkCase.from_mapping(normalized["case"]),
+        execution=ExecutionOptions.from_mapping(normalized["execution"]),
+    ).to_mapping()
 
 
 def compute_train_job_case_id(job: dict) -> str:
     normalized = normalize_train_job(job)
-    return compute_case_id(BenchmarkCase.from_mapping(normalized["case"]))
+    return BenchmarkRequest.from_mapping(normalized).case_id

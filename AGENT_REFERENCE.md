@@ -30,7 +30,7 @@ rules live in [PROTOCOL.md](PROTOCOL.md).
 The core request object is:
 
 ```text
-BenchmarkCase + ExecutionOptions
+BenchmarkRequest = BenchmarkCase + ExecutionOptions
 ```
 
 `BenchmarkCase` contains only benchmark-defining fields. `ExecutionOptions`

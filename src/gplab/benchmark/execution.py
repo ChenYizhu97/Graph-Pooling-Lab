@@ -34,6 +34,3 @@ class ExecutionOptions:
             "tag": self.tag,
             "activation_checkpoint": self.activation_checkpoint,
         }
-
-    def request_metadata(self) -> dict:
-        return self.to_mapping()

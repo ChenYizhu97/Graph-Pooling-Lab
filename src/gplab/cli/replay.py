@@ -4,8 +4,7 @@ import torch
 import typer
 from typing_extensions import Annotated
 
-from gplab.benchmark.case import BenchmarkCase
-from gplab.benchmark.execution import ExecutionOptions
+from gplab.benchmark.request import BenchmarkRequest
 from gplab.experiment.identity import require_record_id
 from gplab.experiment.record import summarize_record
 from gplab.experiment.train_result import execute_train_job
@@ -17,13 +16,8 @@ from gplab.utils.jsonl import read_jsonl
 app = typer.Typer(pretty_exceptions_enable=False)
 
 
-def _build_replay_job(record: dict, *, replay_log_file: str | None) -> dict:
-    case = BenchmarkCase.from_record(record)
-    execution = ExecutionOptions.from_record(record, log_file=replay_log_file)
-    return {
-        "case": case.to_mapping(),
-        "execution": execution.to_mapping(),
-    }
+def _build_replay_request(record: dict, *, replay_log_file: str | None) -> BenchmarkRequest:
+    return BenchmarkRequest.from_record_for_replay(record, replay_log_file=replay_log_file)
 
 
 def _compatibility_status(recorded: dict, current: dict) -> tuple[str, list[dict]]:
@@ -76,7 +70,8 @@ def main(
                 f"record_id '{record_id}' was not found in the selected log file.",
                 param_hint="--record-id",
             )
-        replay_job = _build_replay_job(record, replay_log_file=replay_log_file)
+        replay_request = _build_replay_request(record, replay_log_file=replay_log_file)
+        replay_job = replay_request.to_mapping()
         replay_case_id = compute_train_job_case_id(replay_job)
 
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")

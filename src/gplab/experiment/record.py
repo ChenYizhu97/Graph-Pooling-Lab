@@ -7,10 +7,6 @@ from gplab.benchmark.plan import RunPlan
 from gplab.experiment.identity import attach_record_id, require_record_id
 
 
-def build_case(case: BenchmarkCase) -> dict:
-    return case.to_mapping()
-
-
 def build_result(run_records: list[dict]) -> dict:
     if not run_records:
         raise ValueError("Cannot build result from an empty run record list.")
@@ -42,7 +38,7 @@ def build_record(
     run_records: list[dict],
 ) -> dict:
     record = {
-        "case": build_case(case),
+        "case": case.to_mapping(),
         "execution": execution.to_mapping(),
         "run_plan": run_plan.to_mapping(),
         "runtime": runtime,

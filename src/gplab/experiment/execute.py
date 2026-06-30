@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -6,9 +8,9 @@ from torch_geometric.nn import summary
 from tqdm import tqdm
 
 from gplab.data.dataset import load_dataset, split_dataset
-from gplab.benchmark.case import BenchmarkCase, TrainingConfig
-from gplab.benchmark.execution import ExecutionOptions
+from gplab.benchmark.case import TrainingConfig
 from gplab.benchmark.plan import RunPlan
+from gplab.benchmark.request import BenchmarkRequest
 from gplab.experiment.record import build_record
 from gplab.experiment.reproducibility import (
     configure_runtime_threads,
@@ -21,22 +23,56 @@ from gplab.runtime import build_runtime_meta, console_separator, print_experimen
 from gplab.train_loop import evaluate_epoch, train_epoch
 
 
+@dataclass
+class PreparedRun:
+    request: BenchmarkRequest
+    dataset: object
+    dataset_profile: dict
+    run_plan: RunPlan
+    runtime: dict
+    device: torch.device
+
+
+def _profile_dataset(dataset) -> dict:
+    if len(dataset) == 0:
+        raise ValueError("Loaded dataset is empty.")
+    avg_node_num = sum(int(graph.num_nodes) for graph in dataset) / len(dataset)
+    return {
+        "num_graphs": len(dataset),
+        "num_node_features": dataset.num_node_features,
+        "num_classes": dataset.num_classes,
+        "avg_node_num": avg_node_num,
+    }
+
+
+def prepare_run(request: BenchmarkRequest, device: torch.device, runtime: dict) -> PreparedRun:
+    dataset = load_dataset(request.case.dataset)
+    dataset_profile = _profile_dataset(dataset)
+    return PreparedRun(
+        request=request,
+        dataset=dataset,
+        dataset_profile=dataset_profile,
+        run_plan=RunPlan.build(request.case, dataset_profile["num_graphs"]),
+        runtime=runtime,
+        device=device,
+    )
+
+
 def _build_model(
-    case: BenchmarkCase,
-    execution: ExecutionOptions,
-    dataset,
-    avg_node_num: float,
+    prepared: PreparedRun,
     device: torch.device,
 ):
+    case = prepared.request.case
+    execution = prepared.request.execution
     model_class = GraphClassifierPlain if case.model.variant == "plain" else GraphClassifierSum
     return model_class(
-        dataset.num_node_features,
-        dataset.num_classes,
+        prepared.dataset_profile["num_node_features"],
+        prepared.dataset_profile["num_classes"],
         pool_method=case.pool.name,
         ratio=case.pool.ratio,
         pool_nonlinearity=case.pool.nonlinearity,
         config=case.model,
-        avg_node_num=avg_node_num,
+        avg_node_num=prepared.dataset_profile["avg_node_num"],
         activation_checkpoint=execution.activation_checkpoint,
     ).to(device)
 
@@ -108,52 +144,45 @@ def _execute_single_run(
     }
 
 
-def run_experiment(
-    case: BenchmarkCase,
-    execution: ExecutionOptions,
-    *,
-    emit_text: bool = True,
-) -> dict:
+def run_experiment(request: BenchmarkRequest, *, emit_text: bool = True) -> dict:
     configure_runtime_threads()
     set_np_and_torch(0)
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     runtime = build_runtime_meta(device)
 
     if emit_text:
-        print_experiment_info(case, execution, device)
+        print_experiment_info(request.case, request.execution, device)
 
-    dataset = load_dataset(case.dataset)
-    if len(dataset) == 0:
-        raise ValueError("Loaded dataset is empty.")
-
-    avg_node_num = sum(int(graph.num_nodes) for graph in dataset) / len(dataset)
-    model = _build_model(case, execution, dataset, avg_node_num, device)
+    prepared = prepare_run(request, device, runtime)
+    model = _build_model(prepared, device)
     if emit_text:
-        rprint(summary(model, data=dataset[0].to(device), leaf_module=None, max_depth=5))
+        rprint(summary(model, data=prepared.dataset[0].to(device), leaf_module=None, max_depth=5))
 
-    run_plan = RunPlan.build(case, len(dataset))
     run_records = []
-    for run_idx, (run_seed, run_split) in enumerate(zip(run_plan.seeds, run_plan.splits), start=1):
+    for run_idx, (run_seed, run_split) in enumerate(
+        zip(prepared.run_plan.seeds, prepared.run_plan.splits),
+        start=1,
+    ):
         run_records.append(
             _execute_single_run(
                 model,
-                dataset,
+                prepared.dataset,
                 run_idx=run_idx,
                 run_seed=run_seed,
                 run_split=run_split,
-                train=case.training,
+                train=request.case.training,
                 device=device,
                 show_progress=emit_text,
             )
         )
-        if emit_text and run_idx != case.training.runs:
+        if emit_text and run_idx != request.case.training.runs:
             rprint(console_separator("-"))
 
     record = build_record(
-        case,
-        execution=execution,
-        run_plan=run_plan,
-        runtime=runtime,
+        request.case,
+        execution=request.execution,
+        run_plan=prepared.run_plan,
+        runtime=prepared.runtime,
         run_records=run_records,
     )
     del model

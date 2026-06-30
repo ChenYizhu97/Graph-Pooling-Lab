@@ -86,7 +86,7 @@ def main(
             seeds_section=seeds_section,
         )
 
-        case, execution = build_cli_request(
+        request = build_cli_request(
             model_config=model_config_data,
             training_config=experiment_config_data,
             execution_config=experiment_config_data,
@@ -106,7 +106,7 @@ def main(
             split_val=split_val,
         )
 
-        payload = execute_train_request(case, execution, emit_text=output_format == "text")
+        payload = execute_train_request(request, emit_text=output_format == "text")
 
         if output_format == "json":
             emit_json(payload)
