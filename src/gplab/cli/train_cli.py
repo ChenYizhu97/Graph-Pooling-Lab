@@ -106,7 +106,16 @@ def main(
             split_val=split_val,
         )
 
-        payload = execute_train_request(request, emit_text=output_format == "text")
+        payload = execute_train_request(
+            request,
+            emit_text=output_format == "text",
+            context={
+                "source": "cli_options",
+                "case_id": request.case_id,
+                "model_config": model_config,
+                "experiment_config": experiment_config,
+            },
+        )
 
         if output_format == "json":
             emit_json(payload)

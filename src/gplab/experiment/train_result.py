@@ -10,23 +10,22 @@ def execute_train_request(
     request: BenchmarkRequest,
     *,
     emit_text: bool,
-    request_details: Optional[dict[str, Any]] = None,
+    context: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     record = run_experiment(request, emit_text=emit_text)
     if request.execution.log_file is not None:
         append_jsonl(request.execution.log_file, record)
 
-    request_payload: dict[str, Any] = {}
-    if request_details:
-        request_payload.update(request_details)
-    request_payload.update(request.execution.to_mapping())
+    context_payload: dict[str, Any] = {}
+    if context:
+        context_payload.update(context)
 
     payload = {
         "ok": True,
         "kind": "train_result",
         "record": record,
         "summary": summarize_record(record),
-        "request": request_payload,
+        "context": context_payload,
     }
     if emit_text:
         summary = payload["summary"]

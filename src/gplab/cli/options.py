@@ -30,14 +30,6 @@ def parse_seed_list(seed_list: Optional[str]) -> Optional[list[int]]:
         ) from exc
 
 
-def parse_csv_list(value: str) -> list[str]:
-    items = [item.strip() for item in value.split(",")]
-    values = [item for item in items if item]
-    if not values:
-        raise typer.BadParameter("Expected at least one non-empty comma-separated value.")
-    return values
-
-
 def resolve_seed_options(
     seed_mode: Optional[str],
     seed_base: Optional[int],

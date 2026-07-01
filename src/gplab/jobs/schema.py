@@ -1,3 +1,4 @@
+from copy import deepcopy
 import math
 from typing import Optional
 
@@ -7,10 +8,17 @@ from .defaults import AUTOMATION_EXECUTION_DEFAULTS, AUTOMATION_MODEL_DEFAULTS, 
 
 
 JOB_TOP_LEVEL_FIELDS = {"case", "execution"}
+JOB_REQUIRED_TOP_LEVEL_FIELDS = {"case"}
 CASE_FIELDS = {"dataset", "pool", "model", "training"}
+CASE_REQUIRED_FIELDS = {"dataset", "pool", "training"}
 POOL_FIELDS = {"name", "ratio", "nonlinearity"}
+POOL_REQUIRED_FIELDS = {"name", "ratio"}
+POOL_DEFAULTS = {
+    "nonlinearity": "tanh",
+}
 MODEL_FIELDS = set(AUTOMATION_MODEL_DEFAULTS)
 TRAINING_FIELDS = set(AUTOMATION_TRAINING_DEFAULTS)
+TRAINING_REQUIRED_FIELDS = {"runs", "epochs", "patience"}
 SPLIT_FIELDS = {"train", "val"}
 SEED_FIELDS = {"mode", "base", "values", "allow_duplicates"}
 EXECUTION_FIELDS = set(AUTOMATION_EXECUTION_DEFAULTS)
@@ -82,35 +90,50 @@ def _normalize_float(value, *, field_name: str) -> float:
 def normalize_job_shape(job: dict) -> dict:
     raw = require_mapping(job, label="job")
     _reject_unknown_fields(raw, allowed=JOB_TOP_LEVEL_FIELDS, label="top-level")
-    _require_keys(raw, required=JOB_TOP_LEVEL_FIELDS, label="top-level")
+    _require_keys(raw, required=JOB_REQUIRED_TOP_LEVEL_FIELDS, label="top-level")
 
     case = require_mapping(raw["case"], label="case")
     _reject_unknown_fields(case, allowed=CASE_FIELDS, label="case")
-    _require_keys(case, required=CASE_FIELDS, label="case")
+    _require_keys(case, required=CASE_REQUIRED_FIELDS, label="case")
 
-    pool = require_mapping(case["pool"], label="case.pool")
+    pool = {
+        **deepcopy(POOL_DEFAULTS),
+        **require_mapping(case["pool"], label="case.pool"),
+    }
     _reject_unknown_fields(pool, allowed=POOL_FIELDS, label="case.pool")
-    _require_keys(pool, required=POOL_FIELDS, label="case.pool")
+    _require_keys(pool, required=POOL_REQUIRED_FIELDS, label="case.pool")
 
-    model = require_mapping(case["model"], label="case.model")
+    model = {
+        **deepcopy(AUTOMATION_MODEL_DEFAULTS),
+        **require_mapping(case.get("model", {}), label="case.model"),
+    }
     _reject_unknown_fields(model, allowed=MODEL_FIELDS, label="case.model")
-    _require_keys(model, required=MODEL_FIELDS, label="case.model")
 
-    training = require_mapping(case["training"], label="case.training")
+    raw_training = require_mapping(case.get("training", {}), label="case.training")
+    _require_keys(raw_training, required=TRAINING_REQUIRED_FIELDS, label="case.training")
+    training = {
+        **deepcopy(AUTOMATION_TRAINING_DEFAULTS),
+        **raw_training,
+    }
     _reject_unknown_fields(training, allowed=TRAINING_FIELDS, label="case.training")
-    _require_keys(training, required=TRAINING_FIELDS, label="case.training")
 
-    split = require_mapping(training["split"], label="case.training.split")
+    split = {
+        **deepcopy(AUTOMATION_TRAINING_DEFAULTS["split"]),
+        **require_mapping(training["split"], label="case.training.split"),
+    }
     _reject_unknown_fields(split, allowed=SPLIT_FIELDS, label="case.training.split")
-    _require_keys(split, required=SPLIT_FIELDS, label="case.training.split")
 
-    seeds = require_mapping(training["seeds"], label="case.training.seeds")
+    seeds = {
+        **deepcopy(AUTOMATION_TRAINING_DEFAULTS["seeds"]),
+        **require_mapping(training["seeds"], label="case.training.seeds"),
+    }
     _reject_unknown_fields(seeds, allowed=SEED_FIELDS, label="case.training.seeds")
-    _require_keys(seeds, required=SEED_FIELDS, label="case.training.seeds")
 
-    execution = require_mapping(raw["execution"], label="execution")
+    execution = {
+        **deepcopy(AUTOMATION_EXECUTION_DEFAULTS),
+        **require_mapping(raw.get("execution", {}), label="execution"),
+    }
     _reject_unknown_fields(execution, allowed=EXECUTION_FIELDS, label="execution")
-    _require_keys(execution, required=EXECUTION_FIELDS, label="execution")
 
     normalized = {
         "case": {

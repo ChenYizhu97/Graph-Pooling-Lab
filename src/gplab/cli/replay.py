@@ -97,11 +97,11 @@ def main(
                 run_payload = execute_train_request(
                     replay_request,
                     emit_text=False,
-                    request_details={
-                        "mode": "replay",
+                    context={
+                        "source": "record_replay",
                         "source_record_id": record["record_id"],
                         "source_case_id": source_case_id,
-                        "job_case_id": replay_case_id,
+                        "case_id": replay_case_id,
                         "job": replay_job,
                     },
                 )
@@ -117,7 +117,7 @@ def main(
             return
 
         print(f"Replay record: {record['record_id']}")
-        print("Replay mode: in-process strict job")
+        print("Replay mode: in-process record replay")
         print(f"Source case_id: {source_case_id}")
         print(f"Replay job case_id: {replay_case_id}")
         if replay_log_file is not None:
@@ -134,11 +134,11 @@ def main(
             run_payload = execute_train_request(
                 replay_request,
                 emit_text=True,
-                request_details={
-                    "mode": "replay",
+                context={
+                    "source": "record_replay",
                     "source_record_id": record["record_id"],
                     "source_case_id": source_case_id,
-                    "job_case_id": replay_case_id,
+                    "case_id": replay_case_id,
                     "job": replay_job,
                 },
             )

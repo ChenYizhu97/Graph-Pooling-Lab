@@ -11,7 +11,7 @@ clients should also read [AGENT_REFERENCE.md](AGENT_REFERENCE.md).
 ```mermaid
 flowchart LR
     CLI["CLI / TOML"] --> A["BenchmarkRequest"]
-    JOB["Strict Job JSON"] --> A
+    JOB["Job JSON"] --> A
     REC["ExperimentRecord replay"] --> A
     A --> B["PreparedRun"]
     B --> C["Shared Graph Classifier"]
@@ -36,12 +36,12 @@ resolved `RunPlan` with concrete seeds and split indices.
 All executable entrypoints adapt into the same request object first:
 
 - human CLI / TOML options build a `BenchmarkRequest`
-- strict Job JSON validates into a `BenchmarkRequest`
+- Job JSON validates into a `BenchmarkRequest`
 - replay rebuilds a `BenchmarkRequest` from an `ExperimentRecord`
 
 `request.case_id` identifies the benchmark-defining case. `request.to_mapping()`
 is used only when GPLab needs to print a request-shaped JSON payload, such as a
-generated case manifest or replay job.
+replay job.
 
 GPLab currently targets:
 
@@ -60,7 +60,7 @@ src/gplab/
   cli/            # gplab-* entrypoints
   data/           # TU loading and split helpers
   experiment/     # execution, record, result assembly
-  jobs/           # strict job schema and case manifests
+  jobs/           # Job JSON schema and request adapter
   layers/         # conv/pool resolver and pooling adapters
   model/          # shared graph classifier backbone
 ```
@@ -110,11 +110,11 @@ gplab-train \
   --seed-list 101,202,303
 ```
 
-## Strict Job JSON
+## Job JSON
 
-Machine-facing execution uses a complete JSON object with `case` and
-`execution` blocks. This is the agent-facing request format; GPLab validates it
-into `BenchmarkRequest` before execution.
+Machine-facing execution uses Job JSON. This is the agent-facing request format;
+GPLab fills optional defaults, then validates the result into
+`BenchmarkRequest` before execution.
 
 ```json
 {
@@ -166,33 +166,29 @@ Run the job:
 gplab-run-job --job-file job.json --output-format json
 ```
 
+Or pass JSON directly:
+
+```bash
+gplab-run-job --job-json '{"case":{"dataset":"MUTAG","pool":{"name":"nopool","ratio":0.5},"training":{"runs":1,"epochs":1,"patience":0}}}' --output-format json
+```
+
+Or from stdin:
+
+```bash
+cat job.json | gplab-run-job --job-stdin --output-format json
+```
+
 `gplab-run-job` validates the job before execution. With `--output-format json`,
 invalid jobs return `ok=false`, `kind="job_error"`, `error.type="config_error"`,
 and a field-specific message for the agent to fix and retry.
+Successful responses include the canonical `record`, a derived `summary`, and a
+small `context` object describing the entry source.
 
 ## Automation Entrypoints
 
-- `gplab-expand-cases`: generate complete jobs from combinations.
-- `gplab-run-job`: execute one strict job.
+- `gplab-run-job`: execute one Job JSON request.
 - `gplab-query`: summarize JSONL records.
 - `gplab-replay`: rebuild and optionally rerun one record.
-- `gplab-validate`: caller-directed smoke validation.
-
-Generate a case manifest:
-
-```bash
-gplab-expand-cases \
-  --pools sagpool,diffpool \
-  --datasets MUTAG,PROTEINS \
-  --model-variants sum,plain \
-  --output-format json
-```
-
-Run smoke validation:
-
-```bash
-gplab-validate --pools sagpool,diffpool --datasets MUTAG,PROTEINS
-```
 
 ## Supported Datasets
 

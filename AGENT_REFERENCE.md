@@ -11,7 +11,7 @@ rules live in [PROTOCOL.md](PROTOCOL.md).
 
 ### AUTOMATION_ENTRYPOINTS
 
-`["gplab-run-job", "gplab-expand-cases", "gplab-query", "gplab-replay", "gplab-validate"]`
+`["gplab-run-job", "gplab-query", "gplab-replay"]`
 
 ### SUPPORTED_DATASETS
 
@@ -40,36 +40,45 @@ Executable requests enter through one of three adapters:
 
 ```text
 CLI / TOML options -> BenchmarkRequest
-Strict Job JSON   -> BenchmarkRequest
+Job JSON          -> BenchmarkRequest
 ExperimentRecord  -> BenchmarkRequest
 ```
 
-Use strict Job JSON for agent-driven execution. Use records only as persisted
+Use Job JSON for agent-driven execution. Use records only as persisted
 experiment output or as replay input. `BenchmarkRequest.to_mapping()` is the
-strict Job JSON projection used by manifest and replay output, and
-`BenchmarkRequest.case_id` is the stable case identifier.
+Job JSON projection used by replay output, and `BenchmarkRequest.case_id` is
+the stable case identifier.
 
-### STRICT_JOB_SCHEMA
+### JOB_JSON_SCHEMA
 
 Required top-level fields:
 
 - `case`
+
+Optional top-level fields:
+
 - `execution`
 
-`case` fields:
+Required `case` fields:
 
 - `dataset`
 - `pool`
-- `model`
 - `training`
 
-`case.pool` fields:
+Optional `case` fields:
+
+- `model`
+
+Required `case.pool` fields:
 
 - `name`: string
 - `ratio`: number in `(0, 1]`
+
+Optional `case.pool` fields:
+
 - `nonlinearity`: non-empty string
 
-`case.model` fields:
+Optional `case.model` fields:
 
 - `hidden_features`: integer
 - `nonlinearity`: string
@@ -79,27 +88,50 @@ Required top-level fields:
 - `post_gnn`: integer array
 - `variant`: `"sum"` or `"plain"`
 
-`case.training` fields:
+Required `case.training` fields:
 
 - `runs`: integer greater than 0
-- `lr`: positive finite number
-- `batch_size`: integer greater than 0
 - `patience`: integer greater than or equal to 0
 - `epochs`: integer greater than 0
+
+Optional `case.training` fields:
+
+- `lr`: positive finite number
+- `batch_size`: integer greater than 0
 - `split`: object with `train` and `val`
 - `seeds`: object with `mode`, `base`, `values`, and `allow_duplicates`
 
 `case.training.seeds.mode` is `"auto"` or `"list"`.
 
-`execution` fields:
+Optional `execution` fields:
 
 - `log_file`: string or null
 - `tag`: string or null
 - `activation_checkpoint`: boolean
 
-Unknown fields are rejected.
+Omitted optional fields use GPLab automation defaults. Unknown fields are
+rejected.
 
-Example:
+Minimal example:
+
+```json
+{
+  "case": {
+    "dataset": "MUTAG",
+    "pool": {
+      "name": "nopool",
+      "ratio": 0.5
+    },
+    "training": {
+      "runs": 1,
+      "epochs": 1,
+      "patience": 0
+    }
+  }
+}
+```
+
+Complete example:
 
 ```json
 {
@@ -204,49 +236,31 @@ agent writes job.json -> gplab-run-job -> gplab-query
 non-zero and returns `ok=false` with `error.type="config_error"` and a
 field-specific `error.message`.
 
-### gplab-expand-cases
-
-Expand combinations into complete strict jobs:
-
-```bash
-gplab-expand-cases \
-  --pools <csv> \
-  --datasets <csv> \
-  --model-variants <csv> \
-  --pool-ratio <float> \
-  --output-format json
-```
-
-Relevant overrides:
-
-- `--pool-nonlinearity`
-- `--activation-checkpoint`
-- `--runs`
-- `--epochs`
-- `--patience`
-- `--lr`
-- `--batch-size`
-- `--split-train`
-- `--split-val`
-- `--seed-mode`
-- `--seed-base`
-- `--seed-list`
-- `--allow-duplicate-seeds`
-- `--log-file`
-- `--tag-prefix`
-
-Output kind: `case_manifest`.
-
 ### gplab-run-job
 
-Execute one strict job:
+Execute one Job JSON request:
 
 ```bash
 gplab-run-job --job-file <path> --output-format json
 ```
 
-Output kind: `train_result` on success. Invalid jobs return kind
-`job_error`.
+Other input forms:
+
+```bash
+gplab-run-job --job-json '<json>' --output-format json
+cat job.json | gplab-run-job --job-stdin --output-format json
+```
+
+Provide exactly one of `--job-file`, `--job-json`, or `--job-stdin`.
+
+Output kind: `train_result` on success. Success responses contain:
+
+- `record`: the canonical `ExperimentRecord`
+- `summary`: a derived result summary
+- `context`: command context with `source="job_json"` and `case_id`; `job_file`
+  is included only for file input
+
+Invalid jobs return kind `job_error`.
 
 Invalid job response shape:
 
@@ -256,10 +270,10 @@ Invalid job response shape:
   "kind": "job_error",
   "error": {
     "type": "config_error",
-    "message": "Missing required case.training field(s): seeds.",
+    "message": "Missing required case.pool field(s): ratio.",
     "details": {
       "job_file": "job.json",
-      "mode": "job_json"
+      "source": "job_json"
     }
   }
 }
@@ -291,7 +305,7 @@ Output kinds: `query_result`, `query_report`.
 
 ### gplab-replay
 
-Rebuild a strict job from one record:
+Rebuild a Job JSON request from one record:
 
 ```bash
 gplab-replay --log-file <path> --record-id <id> --output-format json
@@ -303,40 +317,11 @@ Use `--run` to execute the replay. Replay fixes resolved seeds as
 
 Output kind: `replay_result`.
 
-### gplab-validate
-
-Run caller-directed smoke validation:
-
-```bash
-gplab-validate --pools <csv> --datasets <csv> --output-format json
-```
-
-Important options:
-
-- `--model-variant`
-- `--pool-ratio`
-- `--pool-nonlinearity`
-- `--activation-checkpoint`
-- `--runs`
-- `--epochs`
-- `--patience`
-- `--lr`
-- `--batch-size`
-- `--split-train`
-- `--split-val`
-- `--seed-mode`
-- `--seed-base`
-- `--seed-list`
-- `--allow-duplicate-seeds`
-- `--log-file`
-- `--tag-prefix`
-
-Output kind: `validation_result`.
-
 ## Rules
 
-- Use strict jobs for automation execution.
-- Use `gplab-expand-cases` for planning combinations.
+- Use Job JSON for automation execution.
+- Execute one Job JSON request per `gplab-run-job` process.
+- Let the caller schedule multiple experiment cases as multiple processes.
 - Treat `BenchmarkCase` as the benchmark-defining object.
 - Treat `ExecutionOptions` as execution-only.
 - Do not derive benchmark grouping in query code; use the benchmark comparison layer.
