@@ -1,4 +1,6 @@
+from contextlib import nullcontext, redirect_stdout
 import json
+import sys
 from typing import Any, Optional
 
 import typer
@@ -20,6 +22,12 @@ def emit_json(payload: dict[str, Any]) -> None:
     print(json.dumps(payload, ensure_ascii=False))
 
 
+def redirect_stdout_for_json(enabled: bool):
+    if enabled:
+        return redirect_stdout(sys.stderr)
+    return nullcontext()
+
+
 def build_error_payload(kind: str, exc: Exception, details: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     error_type = "runtime_error"
     if isinstance(exc, typer.BadParameter) or isinstance(exc, ValueError):
@@ -35,6 +43,10 @@ def build_error_payload(kind: str, exc: Exception, details: Optional[dict[str, A
             "message": str(exc),
         },
     }
+    for key in ("field", "expected", "missing", "unknown"):
+        value = getattr(exc, key, None)
+        if value is not None:
+            payload["error"][key] = value
     if details:
         payload["error"]["details"] = details
     return payload

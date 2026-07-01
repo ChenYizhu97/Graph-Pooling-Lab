@@ -8,7 +8,12 @@ from gplab.benchmark.request import BenchmarkRequest
 from gplab.experiment.identity import require_record_id
 from gplab.experiment.record import summarize_record
 from gplab.experiment.train_result import execute_train_request
-from gplab.cli.output import build_error_payload, emit_json, validate_output_format
+from gplab.cli.output import (
+    build_error_payload,
+    emit_json,
+    redirect_stdout_for_json,
+    validate_output_format,
+)
 from gplab.runtime import build_runtime_meta
 from gplab.utils.jsonl import read_jsonl
 
@@ -57,6 +62,7 @@ def main(
     output_format: Annotated[str, typer.Option(help="Output format: text or json.")] = "text",
 ):
     output_format = validate_output_format(output_format)
+    json_output = output_format == "json"
     try:
         records = [require_record_id(record) for record in read_jsonl(log_file)]
         record = next((record for record in records if record["record_id"] == record_id), None)
@@ -78,8 +84,8 @@ def main(
             "kind": "replay_result",
             "record": summarize_record(record),
             "job": replay_job,
-            "execution": {
-                "mode": "in_process_strict_job",
+            "context": {
+                "source": "record_replay",
                 "case_id": replay_case_id,
                 "source_case_id": source_case_id,
             },
@@ -92,19 +98,20 @@ def main(
             },
         }
 
-        if output_format == "json":
+        if json_output:
             if run:
-                run_payload = execute_train_request(
-                    replay_request,
-                    emit_text=False,
-                    context={
-                        "source": "record_replay",
-                        "source_record_id": record["record_id"],
-                        "source_case_id": source_case_id,
-                        "case_id": replay_case_id,
-                        "job": replay_job,
-                    },
-                )
+                with redirect_stdout_for_json(True):
+                    run_payload = execute_train_request(
+                        replay_request,
+                        emit_text=False,
+                        context={
+                            "source": "record_replay",
+                            "source_record_id": record["record_id"],
+                            "source_case_id": source_case_id,
+                            "case_id": replay_case_id,
+                            "job": replay_job,
+                        },
+                    )
                 replay_payload["rerun"] = {
                     "requested": True,
                     "ok": True,
@@ -148,7 +155,7 @@ def main(
     except typer.Exit:
         raise
     except Exception as exc:
-        if output_format == "json":
+        if json_output:
             emit_json(build_error_payload("replay_error", exc, details={"log_file": log_file, "record_id": record_id}))
             raise typer.Exit(code=1)
         raise

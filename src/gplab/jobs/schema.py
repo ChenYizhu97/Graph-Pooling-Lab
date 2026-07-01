@@ -24,9 +24,30 @@ SEED_FIELDS = {"mode", "base", "values", "allow_duplicates"}
 EXECUTION_FIELDS = set(AUTOMATION_EXECUTION_DEFAULTS)
 
 
+class JobSchemaError(ValueError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        field: str | None = None,
+        expected: str | None = None,
+        missing: list[str] | None = None,
+        unknown: list[str] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.field = field
+        self.expected = expected
+        self.missing = missing
+        self.unknown = unknown
+
+
 def require_mapping(value, *, label: str) -> dict:
     if not isinstance(value, dict):
-        raise ValueError(f"{label} must be a JSON object.")
+        raise JobSchemaError(
+            f"{label} must be a JSON object.",
+            field=label,
+            expected="JSON object",
+        )
     return value
 
 
@@ -34,56 +55,98 @@ def _reject_unknown_fields(payload: dict, *, allowed: set[str], label: str) -> N
     unknown = sorted(set(payload) - allowed)
     if unknown:
         joined = ", ".join(unknown)
-        raise ValueError(f"Unknown {label} field(s): {joined}.")
+        raise JobSchemaError(
+            f"Unknown {label} field(s): {joined}.",
+            field=label,
+            expected=f"allowed fields: {', '.join(sorted(allowed))}",
+            unknown=unknown,
+        )
 
 
 def _require_keys(payload: dict, *, required: set[str], label: str) -> None:
     missing = sorted(required - set(payload))
     if missing:
         joined = ", ".join(missing)
-        raise ValueError(f"Missing required {label} field(s): {joined}.")
+        raise JobSchemaError(
+            f"Missing required {label} field(s): {joined}.",
+            field=label,
+            expected=f"required fields: {', '.join(sorted(required))}",
+            missing=missing,
+        )
 
 
 def _normalize_optional_string(value, *, field_name: str) -> Optional[str]:
     if value is None:
         return None
     if not isinstance(value, str):
-        raise ValueError(f"{field_name} must be a string or null.")
+        raise JobSchemaError(
+            f"{field_name} must be a string or null.",
+            field=field_name,
+            expected="string or null",
+        )
     return value
 
 
 def _require_string(value, *, field_name: str) -> str:
     if not isinstance(value, str):
-        raise ValueError(f"{field_name} must be a string.")
+        raise JobSchemaError(
+            f"{field_name} must be a string.",
+            field=field_name,
+            expected="string",
+        )
     return value
 
 
 def _normalize_bool(value, *, field_name: str) -> bool:
     if not isinstance(value, bool):
-        raise ValueError(f"{field_name} must be a boolean.")
+        raise JobSchemaError(
+            f"{field_name} must be a boolean.",
+            field=field_name,
+            expected="boolean",
+        )
     return value
 
 
 def _normalize_int(value, *, field_name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"{field_name} must be an integer.")
+        raise JobSchemaError(
+            f"{field_name} must be an integer.",
+            field=field_name,
+            expected="integer",
+        )
     return int(value)
 
 
 def _normalize_int_list(value, *, field_name: str, allow_empty: bool = True) -> list[int]:
     if not isinstance(value, list):
-        raise ValueError(f"{field_name} must be an array of integers.")
+        raise JobSchemaError(
+            f"{field_name} must be an array of integers.",
+            field=field_name,
+            expected="array of integers",
+        )
     if not allow_empty and not value:
-        raise ValueError(f"{field_name} must be a non-empty array of integers.")
+        raise JobSchemaError(
+            f"{field_name} must be a non-empty array of integers.",
+            field=field_name,
+            expected="non-empty array of integers",
+        )
     return [_normalize_int(item, field_name=f"{field_name}[]") for item in value]
 
 
 def _normalize_float(value, *, field_name: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"{field_name} must be a number.")
+        raise JobSchemaError(
+            f"{field_name} must be a number.",
+            field=field_name,
+            expected="finite number",
+        )
     normalized = float(value)
     if not math.isfinite(normalized):
-        raise ValueError(f"{field_name} must be a finite number.")
+        raise JobSchemaError(
+            f"{field_name} must be a finite number.",
+            field=field_name,
+            expected="finite number",
+        )
     return normalized
 
 
@@ -201,5 +264,12 @@ def normalize_job_shape(job: dict) -> dict:
         },
     }
 
-    validate_seed_mode_value(normalized["case"]["training"]["seeds"]["mode"])
+    try:
+        validate_seed_mode_value(normalized["case"]["training"]["seeds"]["mode"])
+    except ValueError as exc:
+        raise JobSchemaError(
+            str(exc),
+            field="case.training.seeds.mode",
+            expected="one of: auto, list",
+        ) from exc
     return normalized

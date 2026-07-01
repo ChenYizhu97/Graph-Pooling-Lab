@@ -6,7 +6,12 @@ from gplab.cli.options import resolve_seed_options
 from gplab.cli.request import build_cli_request
 from gplab.experiment.train_result import execute_train_request
 from gplab.paths import default_config_path
-from gplab.cli.output import build_error_payload, emit_json, validate_output_format
+from gplab.cli.output import (
+    build_error_payload,
+    emit_json,
+    redirect_stdout_for_json,
+    validate_output_format,
+)
 
 app = typer.Typer(pretty_exceptions_enable=False)
 
@@ -68,61 +73,63 @@ def main(
     output_format: Annotated[str, typer.Option(help="Output format: text or json.")] = "text",
 ):
     output_format = validate_output_format(output_format)
+    json_output = output_format == "json"
     try:
-        model_config_data = toml.load(model_config)
-        experiment_config_data = toml.load(experiment_config)
-        training_section = experiment_config_data.get("training", {})
-        seeds_section = training_section.get("seeds", {})
-        (
-            resolved_seed_mode,
-            resolved_seed_base,
-            resolved_allow_duplicates,
-            resolved_seed_values,
-        ) = resolve_seed_options(
-            seed_mode=seed_mode,
-            seed_base=seed_base,
-            seed_list=seed_list,
-            allow_duplicate_seeds=allow_duplicate_seeds,
-            seeds_section=seeds_section,
-        )
+        with redirect_stdout_for_json(json_output):
+            model_config_data = toml.load(model_config)
+            experiment_config_data = toml.load(experiment_config)
+            training_section = experiment_config_data.get("training", {})
+            seeds_section = training_section.get("seeds", {})
+            (
+                resolved_seed_mode,
+                resolved_seed_base,
+                resolved_allow_duplicates,
+                resolved_seed_values,
+            ) = resolve_seed_options(
+                seed_mode=seed_mode,
+                seed_base=seed_base,
+                seed_list=seed_list,
+                allow_duplicate_seeds=allow_duplicate_seeds,
+                seeds_section=seeds_section,
+            )
 
-        request = build_cli_request(
-            model_config=model_config_data,
-            training_config=experiment_config_data,
-            execution_config=experiment_config_data,
-            pool=pool,
-            pool_ratio=pool_ratio,
-            pool_nonlinearity=pool_nonlinearity,
-            activation_checkpoint=activation_checkpoint,
-            dataset_name=dataset,
-            model_variant=model_variant,
-            tag=tag,
-            log_file=log_file,
-            seed_mode=resolved_seed_mode,
-            seed_base=resolved_seed_base,
-            seed_values=resolved_seed_values,
-            allow_duplicate_seeds=resolved_allow_duplicates,
-            split_train=split_train,
-            split_val=split_val,
-        )
+            request = build_cli_request(
+                model_config=model_config_data,
+                training_config=experiment_config_data,
+                execution_config=experiment_config_data,
+                pool=pool,
+                pool_ratio=pool_ratio,
+                pool_nonlinearity=pool_nonlinearity,
+                activation_checkpoint=activation_checkpoint,
+                dataset_name=dataset,
+                model_variant=model_variant,
+                tag=tag,
+                log_file=log_file,
+                seed_mode=resolved_seed_mode,
+                seed_base=resolved_seed_base,
+                seed_values=resolved_seed_values,
+                allow_duplicate_seeds=resolved_allow_duplicates,
+                split_train=split_train,
+                split_val=split_val,
+            )
 
-        payload = execute_train_request(
-            request,
-            emit_text=output_format == "text",
-            context={
-                "source": "cli_options",
-                "case_id": request.case_id,
-                "model_config": model_config,
-                "experiment_config": experiment_config,
-            },
-        )
+            payload = execute_train_request(
+                request,
+                emit_text=output_format == "text",
+                context={
+                    "source": "cli_options",
+                    "case_id": request.case_id,
+                    "model_config": model_config,
+                    "experiment_config": experiment_config,
+                },
+            )
 
-        if output_format == "json":
+        if json_output:
             emit_json(payload)
     except typer.Exit:
         raise
     except Exception as exc:
-        if output_format == "json":
+        if json_output:
             emit_json(build_error_payload("train_error", exc, details={"log_file": log_file}))
             raise typer.Exit(code=1)
         raise

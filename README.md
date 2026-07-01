@@ -110,11 +110,17 @@ gplab-train \
   --seed-list 101,202,303
 ```
 
+`gplab-train` is a human convenience entrypoint. Automation should use
+`gplab-run-job` with Job JSON.
+
 ## Job JSON
 
 Machine-facing execution uses Job JSON. This is the agent-facing request format;
 GPLab fills optional defaults, then validates the result into
 `BenchmarkRequest` before execution.
+
+A Job JSON describes exactly one experiment case. It is not a batch manifest:
+dataset, pool, ratio, model, and training settings are single values.
 
 ```json
 {
@@ -183,6 +189,14 @@ invalid jobs return `ok=false`, `kind="job_error"`, `error.type="config_error"`,
 and a field-specific message for the agent to fix and retry.
 Successful responses include the canonical `record`, a derived `summary`, and a
 small `context` object describing the entry source.
+
+With `--output-format json`, stdout is reserved for the single JSON response.
+Progress and third-party output are redirected to stderr.
+
+One `gplab-run-job` process executes exactly one Job JSON request and produces
+one `ExperimentRecord`. If an agent schedules many cases concurrently, it must
+use one process per case. Do not let multiple processes append to the same
+`execution.log_file`; use separate JSONL files or serialize writes externally.
 
 ## Automation Entrypoints
 
@@ -257,6 +271,10 @@ Each JSONL record contains:
 Records are the persisted experiment output. Replay uses the stored `case`,
 `execution`, and resolved `run_plan.seeds` to rebuild an exact request with
 `case.training.seeds.mode="list"`.
+
+The `record` field in `train_result` is the canonical persisted object.
+`summary` is derived from the record, and `context` only describes the command
+entrypoint.
 
 Query records:
 

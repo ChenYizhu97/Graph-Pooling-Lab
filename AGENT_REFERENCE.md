@@ -51,6 +51,10 @@ the stable case identifier.
 
 ### JOB_JSON_SCHEMA
 
+A Job JSON describes exactly one experiment case. Do not send arrays of
+datasets, pools, ratios, or training settings; schedule those as separate
+`gplab-run-job` processes.
+
 Required top-level fields:
 
 - `case`
@@ -234,7 +238,9 @@ agent writes job.json -> gplab-run-job -> gplab-query
 
 `gplab-run-job` is also the validation boundary. If the job is invalid, it exits
 non-zero and returns `ok=false` with `error.type="config_error"` and a
-field-specific `error.message`.
+field-specific `error.message`. When `--output-format json` is used, stdout is
+reserved for the single JSON response; progress and third-party output go to
+stderr.
 
 ### gplab-run-job
 
@@ -271,6 +277,9 @@ Invalid job response shape:
   "error": {
     "type": "config_error",
     "message": "Missing required case.pool field(s): ratio.",
+    "field": "case.pool",
+    "expected": "required fields: name, ratio",
+    "missing": ["ratio"],
     "details": {
       "job_file": "job.json",
       "source": "job_json"
@@ -315,13 +324,21 @@ Use `--run` to execute the replay. Replay fixes resolved seeds as
 `case.training.seeds.mode="list"` and writes resolved seeds to
 `case.training.seeds.values`.
 
-Output kind: `replay_result`.
+Output kind: `replay_result`. The top-level `job` is the replayable Job JSON,
+and `context` contains `source="record_replay"`, `source_case_id`, and the
+replay `case_id`. If `--run` is used, `rerun.payload` is a standard
+`train_result`.
 
 ## Rules
 
 - Use Job JSON for automation execution.
 - Execute one Job JSON request per `gplab-run-job` process.
 - Let the caller schedule multiple experiment cases as multiple processes.
+- Do not let multiple processes append to the same `execution.log_file`; use
+  separate JSONL files or serialize writes externally.
+- Treat `record` in `train_result` as the canonical persisted object.
+- Treat `summary` and `context` as derived response metadata.
+- Treat `gplab-train` as a human convenience entrypoint, not the agent protocol.
 - Treat `BenchmarkCase` as the benchmark-defining object.
 - Treat `ExecutionOptions` as execution-only.
 - Do not derive benchmark grouping in query code; use the benchmark comparison layer.

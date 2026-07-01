@@ -5,7 +5,12 @@ from typing_extensions import Annotated, Optional
 
 from gplab.experiment.train_result import execute_train_request
 from gplab.jobs import load_job_file, load_job_text, request_from_job
-from gplab.cli.output import build_error_payload, emit_json, validate_output_format
+from gplab.cli.output import (
+    build_error_payload,
+    emit_json,
+    redirect_stdout_for_json,
+    validate_output_format,
+)
 
 app = typer.Typer(pretty_exceptions_enable=False)
 
@@ -46,13 +51,15 @@ def main(
     output_format: Annotated[str, typer.Option(help="Output format: text or json.")] = "json",
 ):
     output_format = validate_output_format(output_format)
+    json_output = output_format == "json"
     try:
-        job = _load_job_input(job_file=job_file, job_json=job_json, job_stdin=job_stdin)
-        request = request_from_job(job)
+        with redirect_stdout_for_json(json_output):
+            job = _load_job_input(job_file=job_file, job_json=job_json, job_stdin=job_stdin)
+            request = request_from_job(job)
     except typer.Exit:
         raise
     except Exception as exc:
-        if output_format == "json":
+        if json_output:
             details = {"source": "job_json"}
             if job_file is not None:
                 details["job_file"] = job_file
@@ -67,18 +74,19 @@ def main(
         }
         if job_file is not None:
             context["job_file"] = job_file
-        payload = execute_train_request(
-            request,
-            emit_text=output_format == "text",
-            context=context,
-        )
+        with redirect_stdout_for_json(json_output):
+            payload = execute_train_request(
+                request,
+                emit_text=output_format == "text",
+                context=context,
+            )
 
-        if output_format == "json":
+        if json_output:
             emit_json(payload)
     except typer.Exit:
         raise
     except Exception as exc:
-        if output_format == "json":
+        if json_output:
             details = {
                 "source": "job_json",
                 "case_id": request.case_id,
