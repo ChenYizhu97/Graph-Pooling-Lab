@@ -1,3 +1,5 @@
+from typing import Any
+
 import numpy as np
 
 from gplab.benchmark.case import BenchmarkCase
@@ -5,6 +7,9 @@ from gplab.benchmark.comparison import compute_record_benchmark_key
 from gplab.benchmark.execution import ExecutionOptions
 from gplab.benchmark.plan import RunPlan
 from gplab.experiment.identity import attach_record_id, require_record_id
+
+
+ExperimentRecord = dict[str, Any]
 
 
 def build_result(run_records: list[dict]) -> dict:
@@ -36,7 +41,7 @@ def build_record(
     run_plan: RunPlan,
     runtime: dict,
     run_records: list[dict],
-) -> dict:
+) -> ExperimentRecord:
     record = {
         "case": case.to_mapping(),
         "execution": execution.to_mapping(),
@@ -47,7 +52,7 @@ def build_record(
     return attach_record_id(record)
 
 
-def summarize_record(record: dict) -> dict:
+def summarize_record(record: ExperimentRecord) -> dict:
     ensured = require_record_id(record)
     runs = ensured["result"]["runs"]
     test_acc = [float(run["best_test_acc"]) for run in runs]

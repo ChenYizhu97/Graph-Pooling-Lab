@@ -65,6 +65,37 @@ src/gplab/
   model/          # shared graph classifier backbone
 ```
 
+## Execution Flow
+
+Agent execution:
+
+```text
+gplab-run-job
+  -> jobs.io.load_job_*
+  -> jobs.schema.normalize_job_shape
+  -> jobs.request.request_from_job
+  -> BenchmarkRequest
+  -> experiment.train_result.execute_train_request
+  -> experiment.execute.run_experiment
+  -> experiment.record.build_record
+  -> experiment.train_result.persist_record
+  -> train_result
+```
+
+Record query and replay:
+
+```text
+gplab-query
+  -> experiment.record_log.load_record_log
+  -> experiment.query.build_query_result / build_benchmark_report
+
+gplab-replay
+  -> experiment.record_log.load_record_log
+  -> experiment.record_log.find_record_by_id
+  -> BenchmarkRequest.from_record_for_replay
+  -> optional execute_train_request
+```
+
 ## Install
 
 ```bash
@@ -190,8 +221,8 @@ and a field-specific message for the agent to fix and retry.
 Successful responses include the canonical `record`, a derived `summary`, and a
 small `context` object describing the entry source.
 
-With `--output-format json`, stdout is reserved for the single JSON response.
-Progress and third-party output are redirected to stderr.
+With `--output-format json`, stdout is reserved for exactly one JSON response.
+Progress, diagnostics, and third-party output are redirected to stderr.
 
 One `gplab-run-job` process executes exactly one Job JSON request and produces
 one `ExperimentRecord`. If an agent schedules many cases concurrently, it must
@@ -259,7 +290,7 @@ The factory must return a `torch.nn.Module`; the module must return
 
 ## Experiment Records
 
-Each JSONL record contains:
+Each JSONL record is an `ExperimentRecord`: a `dict[str, Any]` with:
 
 - `case`: the benchmark case
 - `execution`: execution-only options
@@ -268,8 +299,12 @@ Each JSONL record contains:
 - `result`: per-run and aggregate metrics
 - `record_id`: content hash
 
-Records are the persisted experiment output. Replay uses the stored `case`,
-`execution`, and resolved `run_plan.seeds` to rebuild an exact request with
+The full schema is documented in [AGENT_REFERENCE.md](AGENT_REFERENCE.md).
+
+Records are the persisted experiment output. One JSONL line is one
+`ExperimentRecord`; query and replay both load records through the shared
+`experiment.record_log` boundary. Replay uses the stored `case`, `execution`,
+and resolved `run_plan.seeds` to rebuild an exact request with
 `case.training.seeds.mode="list"`.
 
 The `record` field in `train_result` is the canonical persisted object.

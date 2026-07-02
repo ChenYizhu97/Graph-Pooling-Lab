@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from gplab.experiment.identity import require_record_id
+from gplab.experiment.record import ExperimentRecord
 from gplab.utils.jsonl import read_jsonl
 
 
@@ -14,7 +15,7 @@ class RecordLogError(ValueError):
         self.expected = expected
 
 
-def require_experiment_record(record: dict) -> dict:
+def require_experiment_record(record: dict) -> ExperimentRecord:
     try:
         ensured = require_record_id(record)
     except ValueError as exc:
@@ -30,11 +31,11 @@ def require_experiment_record(record: dict) -> dict:
     return ensured
 
 
-def load_record_log(log_file: str) -> list[dict]:
+def load_record_log(log_file: str) -> list[ExperimentRecord]:
     return [require_experiment_record(record) for record in read_jsonl(log_file)]
 
 
-def find_record_by_id(records: list[dict], record_id: str) -> dict:
+def find_record_by_id(records: list[ExperimentRecord], record_id: str) -> ExperimentRecord:
     record = next((record for record in records if record["record_id"] == record_id), None)
     if record is None:
         raise RecordLogError(

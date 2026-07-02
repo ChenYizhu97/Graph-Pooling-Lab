@@ -25,29 +25,15 @@ rules live in [PROTOCOL.md](PROTOCOL.md).
 
 `"<python_module>:<factory_name>"`
 
-### CORE_MODEL
+### INTERFACE_MODEL
 
-The core request object is:
+Use Job JSON for agent-driven execution. A Job JSON request contains one
+benchmark-defining `case` and optional execution settings.
 
-```text
-BenchmarkRequest = BenchmarkCase + ExecutionOptions
-```
-
-`BenchmarkCase` contains only benchmark-defining fields. `ExecutionOptions`
-contains `log_file`, `tag`, and `activation_checkpoint`.
-
-Executable requests enter through one of three adapters:
-
-```text
-CLI / TOML options -> BenchmarkRequest
-Job JSON          -> BenchmarkRequest
-ExperimentRecord  -> BenchmarkRequest
-```
-
-Use Job JSON for agent-driven execution. Use records only as persisted
-experiment output or as replay input. `BenchmarkRequest.to_mapping()` is the
-Job JSON projection used by replay output, and `BenchmarkRequest.case_id` is
-the stable case identifier.
+Successful execution returns a `train_result` whose `record` is the canonical
+persisted `ExperimentRecord`. Query and replay operate on JSONL logs containing
+those records. A `case_id` identifies the benchmark-defining case; replay
+responses report both the source record case id and the replay case id.
 
 ### JOB_JSON_SCHEMA
 
@@ -183,18 +169,62 @@ Complete example:
 
 ### RECORD_SCHEMA
 
-Records are append-only JSONL entries produced by executed requests. They
-contain:
+Records are append-only JSONL entries produced by executed requests.
+`ExperimentRecord` is a JSON object matching this schema:
 
-- `record_id`
-- `case`
-- `execution`
-- `run_plan`
-- `runtime`
-- `result`
+```json
+{
+  "record_id": "c3433057e520",
+  "case": {
+    "...": "BenchmarkCase mapping"
+  },
+  "execution": {
+    "...": "ExecutionOptions mapping"
+  },
+  "run_plan": {
+    "case_id": "f7a12815cbc5",
+    "seeds": [457750178],
+    "splits": [
+      {
+        "train": [0, 1],
+        "val": [2],
+        "test": [3]
+      }
+    ]
+  },
+  "runtime": {
+    "created_at_utc": "2026-07-02T00:00:00+00:00",
+    "python_version": "3.10.13",
+    "torch_version": "2.1.0",
+    "torch_geometric_version": "2.4.0",
+    "device": "cpu",
+    "cuda_available": false,
+    "cudnn_deterministic": true,
+    "cudnn_benchmark": false
+  },
+  "result": {
+    "mean": 0.5,
+    "std": 0.0,
+    "runs": [
+      {
+        "seed": 457750178,
+        "best_epoch": 1,
+        "best_val_loss": 1.0,
+        "best_val_auxiliary_loss": 0.0,
+        "best_test_acc": 0.5
+      }
+    ]
+  }
+}
+```
 
 `run_plan` contains `case_id`, resolved `seeds`, and concrete `train` / `val` /
-`test` split indices.
+`test` split indices. `result.mean` and `result.std` are computed from
+`result.runs[*].best_test_acc`.
+
+One record log line is one `ExperimentRecord`. `gplab-query` and `gplab-replay`
+both consume this JSONL format; malformed records return structured config
+errors instead of being treated as partial records.
 
 Replay rebuilds a request from `case`, `execution`, and `run_plan.seeds`; the
 replay job uses `case.training.seeds.mode="list"`. A replay result reports both
@@ -241,6 +271,41 @@ non-zero and returns `ok=false` with `error.type="config_error"` and a
 field-specific `error.message`. When `--output-format json` is used, stdout is
 reserved for the single JSON response; progress and third-party output go to
 stderr.
+
+### JSON_OUTPUT_CONTRACT
+
+For every GPLab CLI invocation using `--output-format json`, stdout contains
+exactly one JSON object on success or on handled errors. Progress, diagnostics,
+dependency output, and shell wrappers belong to stderr. Agents should parse
+stdout as the machine response and use the process exit code only to distinguish
+success from failure.
+
+### ERROR_RESPONSE
+
+Handled failures use this envelope:
+
+```json
+{
+  "ok": false,
+  "kind": "job_error",
+  "error": {
+    "type": "config_error",
+    "message": "Human-readable error.",
+    "field": "case.pool.ratio",
+    "expected": "finite number",
+    "missing": ["ratio"],
+    "unknown": ["extra"],
+    "details": {
+      "source": "job_json"
+    }
+  }
+}
+```
+
+`kind` is command-specific, such as `job_error`, `query_error`, or
+`replay_error`. `error.type` is one of `config_error`, `file_not_found`, or
+`runtime_error`. `field`, `expected`, `missing`, `unknown`, and `details` are
+included only when available.
 
 ### gplab-run-job
 

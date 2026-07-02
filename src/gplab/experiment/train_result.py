@@ -2,17 +2,17 @@ from typing import Any, Optional
 
 from gplab.benchmark.request import BenchmarkRequest
 from gplab.experiment.execute import run_experiment
-from gplab.experiment.record import summarize_record
+from gplab.experiment.record import ExperimentRecord, summarize_record
 from gplab.utils.jsonl import append_jsonl
 
 
-def persist_record(record: dict, log_file: Optional[str]) -> None:
+def persist_record(record: ExperimentRecord, log_file: Optional[str]) -> None:
     if log_file is not None:
         append_jsonl(log_file, record)
 
 
 def build_train_result(
-    record: dict,
+    record: ExperimentRecord,
     *,
     context: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
