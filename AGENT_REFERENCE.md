@@ -303,7 +303,7 @@ Filters:
 - `--model-variant`
 - `--tag`
 
-Report and inspection flags:
+Report, sort, and inspection flags:
 
 - `--report`
 - `--sort-by`
@@ -311,6 +311,15 @@ Report and inspection flags:
 - `--show-replay`
 
 Output kinds: `query_result`, `query_report`.
+
+`query_result` contains `context` and `summaries`. `summaries` are derived
+record views, not canonical `ExperimentRecord` objects. `context` reports
+`source="record_log"`, `log_file`, active `filters`, `sort_by`,
+`total_records`, and `matched_records`.
+
+`query_report` contains the same `context` plus grouped benchmark comparisons.
+Each group contains `benchmark_key`, a `comparison` block, and ranked
+`summaries`.
 
 ### gplab-replay
 
@@ -338,6 +347,8 @@ replay `case_id`. If `--run` is used, `rerun.payload` is a standard
   separate JSONL files or serialize writes externally.
 - Treat `record` in `train_result` as the canonical persisted object.
 - Treat `summary` and `context` as derived response metadata.
+- Treat `query_result.summaries` and `query_report.groups[].summaries` as
+  derived views, not persisted records.
 - Treat `gplab-train` as a human convenience entrypoint, not the agent protocol.
 - Treat `BenchmarkCase` as the benchmark-defining object.
 - Treat `ExecutionOptions` as execution-only.

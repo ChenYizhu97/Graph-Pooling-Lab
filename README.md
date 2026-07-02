@@ -59,7 +59,7 @@ src/gplab/
   benchmark/      # BenchmarkCase, BenchmarkRequest, RunPlan, comparison keys
   cli/            # gplab-* entrypoints
   data/           # TU loading and split helpers
-  experiment/     # execution, record, result assembly
+  experiment/     # execution, records, query/report views, result assembly
   jobs/           # Job JSON schema and request adapter
   layers/         # conv/pool resolver and pooling adapters
   model/          # shared graph classifier backbone
@@ -283,6 +283,10 @@ gplab-query --log-file runs/bench.jsonl --report
 gplab-query --log-file runs/bench.jsonl --model-variant plain
 gplab-query --log-file runs/bench.jsonl --show-case --show-replay
 ```
+
+`gplab-query` reads JSONL `ExperimentRecord` entries and returns derived
+summaries or grouped benchmark reports. JSON output includes `context`; query
+summaries are not canonical records.
 
 Replay one record:
 
