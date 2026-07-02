@@ -5,8 +5,8 @@ import typer
 from typing_extensions import Annotated
 
 from gplab.benchmark.request import BenchmarkRequest
-from gplab.experiment.identity import require_record_id
 from gplab.experiment.record import summarize_record
+from gplab.experiment.record_log import RecordLogError, find_record_by_id, load_record_log
 from gplab.experiment.train_result import execute_train_request
 from gplab.cli.output import (
     build_error_payload,
@@ -15,7 +15,6 @@ from gplab.cli.output import (
     validate_output_format,
 )
 from gplab.runtime import build_runtime_meta
-from gplab.utils.jsonl import read_jsonl
 
 app = typer.Typer(pretty_exceptions_enable=False)
 
@@ -64,13 +63,7 @@ def main(
     output_format = validate_output_format(output_format)
     json_output = output_format == "json"
     try:
-        records = [require_record_id(record) for record in read_jsonl(log_file)]
-        record = next((record for record in records if record["record_id"] == record_id), None)
-        if record is None:
-            raise typer.BadParameter(
-                f"record_id '{record_id}' was not found in the selected log file.",
-                param_hint="--record-id",
-            )
+        record = find_record_by_id(load_record_log(log_file), record_id)
         replay_request = BenchmarkRequest.from_record_for_replay(record, replay_log_file=replay_log_file)
         replay_job = replay_request.to_mapping()
         source_case_id = record["run_plan"]["case_id"]
@@ -154,6 +147,12 @@ def main(
             print("Use --run to execute this replay.")
     except typer.Exit:
         raise
+    except RecordLogError as exc:
+        if json_output:
+            emit_json(build_error_payload("replay_error", exc, details={"log_file": log_file, "record_id": record_id}))
+            raise typer.Exit(code=1)
+        param_hint = f"--{exc.field.replace('_', '-')}" if exc.field == "record_id" else None
+        raise typer.BadParameter(str(exc), param_hint=param_hint) from exc
     except Exception as exc:
         if json_output:
             emit_json(build_error_payload("replay_error", exc, details={"log_file": log_file, "record_id": record_id}))

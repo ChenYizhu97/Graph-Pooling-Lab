@@ -5,9 +5,7 @@ import shlex
 from typing import Optional
 
 from gplab.benchmark.comparison import compute_record_benchmark_key
-from gplab.experiment.identity import require_record_id
 from gplab.experiment.record import summarize_record
-from gplab.utils.jsonl import read_jsonl
 from gplab.utils.validation import (
     validate_dataset_value,
     validate_model_variant_value,
@@ -17,7 +15,6 @@ from gplab.utils.validation import (
 
 SORT_FIELDS = ("mean", "std", "avg_best_epoch", "avg_val_loss")
 LOWER_IS_BETTER = {"std", "avg_val_loss", "avg_best_epoch"}
-RECORD_FIELDS = ("case", "execution", "run_plan", "runtime", "result")
 
 
 class QuerySpecError(ValueError):
@@ -73,18 +70,6 @@ def validate_query_spec(spec: QuerySpec) -> None:
             validate_model_variant_value(spec.model_variant)
         except ValueError as exc:
             raise QuerySpecError(str(exc), field="model_variant") from exc
-
-
-def require_experiment_record(record: dict) -> dict:
-    ensured = require_record_id(record)
-    missing = [field for field in RECORD_FIELDS if field not in ensured]
-    if missing:
-        raise ValueError(f"Record is missing required field(s): {', '.join(missing)}.")
-    return ensured
-
-
-def load_record_log(log_file: str) -> list[dict]:
-    return [require_experiment_record(record) for record in read_jsonl(log_file)]
 
 
 def select_records(records: list[dict], spec: QuerySpec) -> list[dict]:

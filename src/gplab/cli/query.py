@@ -9,8 +9,8 @@ from gplab.experiment.query import (
     build_query_result,
     format_query_text,
     format_report_text,
-    load_record_log,
 )
+from gplab.experiment.record_log import load_record_log
 
 app = typer.Typer(pretty_exceptions_enable=False)
 
