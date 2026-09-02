@@ -61,7 +61,7 @@ src/gplab/
   data/           # TU loading and split helpers
   experiment/     # execution, records, query/report views, result assembly
   jobs/           # Job JSON schema and request adapter
-  layers/         # conv/pool resolver and pooling adapters
+  layers/         # conv/pool profiles, types, and adapters
   model/          # shared graph classifier backbone
 ```
 
@@ -166,7 +166,8 @@ dataset, pool, ratio, model, and training settings are single values.
       "hidden_features": 128,
       "nonlinearity": "relu",
       "p_dropout": 0.0,
-      "conv_layer": "GCN",
+      "pre_conv": "GCN",
+      "post_conv": "GCN",
       "pre_gnn": [128],
       "post_gnn": [256, 128],
       "variant": "sum"
@@ -265,28 +266,47 @@ wrapped by `DensePoolAdapter`, which converts sparse input batches to dense
 tensors, applies dense pooling, and converts fixed cluster slots back to sparse
 format for the shared downstream backbone.
 
-## Custom Pooling Plugins
+## Custom Pooling Profiles
 
-Custom pooling factories use:
+Custom pooling profiles use:
 
 ```text
-<python_module>:<factory_name>
+<python_module>:<profile_name>
 ```
 
-Recommended factory signature:
+The referenced object must be a `PoolingProfile` containing the builder and
+the method's declared connectivity signatures:
 
 ```python
+from gplab.graph import ConnectivityType
+from gplab.layers.pool import PoolingProfile, PoolingSignature
+
+
 def build_pool(
     in_channels: int,
-    ratio: float = 0.5,
-    avg_node_num=None,
-    nonlinearity="relu",
+    ratio: float,
+    avg_node_num,
+    nonlinearity,
 ):
     ...
+
+
+CUSTOM_POOL_PROFILE = PoolingProfile(
+    builder=build_pool,
+    signatures=(
+        PoolingSignature(
+            ConnectivityType.BINARY,
+            ConnectivityType.BINARY,
+        ),
+    ),
+)
 ```
 
-The factory must return a `torch.nn.Module`; the module must return
-`PoolOutput` and implement `reset_parameters()`.
+The builder must return a `torch.nn.Module`; the module must return
+`PoolingOutput` and implement `reset_parameters()`. Its forward path receives `x`,
+`edge_index`, `batch`, and optional scalar connectivity through `edge_weight`;
+`PoolingOutput.edge_weight` is the corresponding output channel. See
+`examples/custom_pool_plugin.py` for a complete profile.
 
 ## Experiment Records
 

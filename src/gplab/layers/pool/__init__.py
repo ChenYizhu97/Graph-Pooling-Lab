@@ -1,12 +1,27 @@
 from .dense_pool_adapter import DensePoolAdapter
+from .pyg_adapters import ASAPoolAdapter, TopKPoolAdapter
 from .sag_pool import SAGPooling
 from .sparse_pool import SparsePooling
-from .contracts import PoolOutput, validate_pool_output
+from .pooling_output import PoolingOutput, validate_pooling_output
+from .profiles import (
+    POOLING_PROFILES,
+    PoolingProfile,
+    PoolingSignature,
+    load_pooling_profile,
+    validate_pooling_profile_name,
+)
 
 __all__ = [
+    "ASAPoolAdapter",
     "DensePoolAdapter",
+    "POOLING_PROFILES",
+    "PoolingOutput",
+    "PoolingProfile",
+    "PoolingSignature",
     "SAGPooling",
     "SparsePooling",
-    "PoolOutput",
-    "validate_pool_output",
+    "TopKPoolAdapter",
+    "load_pooling_profile",
+    "validate_pooling_profile_name",
+    "validate_pooling_output",
 ]

@@ -2,6 +2,7 @@
 hidden_features = 128
 nonlinearity = "relu"
 p_dropout =  0.0
-conv_layer = "GCN"
+pre_conv = "GCN"
+post_conv = "GCN"
 pre_gnn = [128]
 post_gnn = [256, 128]

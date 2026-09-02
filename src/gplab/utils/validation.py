@@ -1,21 +1,7 @@
 import math
 
-from gplab.utils.registry import BUILTIN_POOLS, TU_DATASETS
-
 MODEL_VARIANTS = ("sum", "plain")
 SEED_MODES = ("auto", "list")
-
-
-def validate_dataset_value(name: str) -> None:
-    if name not in TU_DATASETS:
-        raise ValueError(f"Unsupported dataset '{name}'. Supported datasets: {', '.join(TU_DATASETS)}")
-
-
-def validate_pool_value(name: str, builtins: tuple[str, ...] = BUILTIN_POOLS) -> bool:
-    is_custom_pool = ":" in name
-    if not is_custom_pool and name not in builtins:
-        raise ValueError(f"Unknown pooling method '{name}'. Built-ins: {', '.join(builtins)}")
-    return is_custom_pool
 
 
 def validate_pool_ratio_value(ratio: float) -> None:

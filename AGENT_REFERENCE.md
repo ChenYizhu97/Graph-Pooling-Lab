@@ -23,7 +23,7 @@ rules live in [PROTOCOL.md](PROTOCOL.md).
 
 ### CUSTOM_POOL_FORMAT
 
-`"<python_module>:<factory_name>"`
+`"<python_module>:<profile_name>"`
 
 ### INTERFACE_MODEL
 
@@ -73,7 +73,8 @@ Optional `case.model` fields:
 - `hidden_features`: integer
 - `nonlinearity`: string
 - `p_dropout`: number in `[0, 1)`
-- `conv_layer`: string
+- `pre_conv`: string
+- `post_conv`: string
 - `pre_gnn`: integer array
 - `post_gnn`: integer array
 - `variant`: `"sum"` or `"plain"`
@@ -136,7 +137,8 @@ Complete example:
       "hidden_features": 128,
       "nonlinearity": "relu",
       "p_dropout": 0.0,
-      "conv_layer": "GCN",
+      "pre_conv": "GCN",
+      "post_conv": "GCN",
       "pre_gnn": [128],
       "post_gnn": [256, 128],
       "variant": "sum"
@@ -226,9 +228,10 @@ One record log line is one `ExperimentRecord`. `gplab-query` and `gplab-replay`
 both consume this JSONL format; malformed records return structured config
 errors instead of being treated as partial records.
 
-Replay rebuilds a request from `case`, `execution`, and `run_plan.seeds`; the
-replay job uses `case.training.seeds.mode="list"`. A replay result reports both
-the source record case id and the replay job case id.
+Replay rebuilds a request from `case`, `execution`, and the recorded run plan;
+the replay job uses `case.training.seeds.mode="list"` and executes the stored
+concrete split indices. A replay result reports both the source record case id
+and the replay job case id.
 
 ### SUMMARY_FIELDS
 

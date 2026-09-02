@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from gplab.data.dataset import build_split_indices
 
 from .case import BenchmarkCase
-from .comparison import compute_case_id
+from .identity import compute_case_id
 from .seeds import resolve_seeds
 
 
@@ -38,6 +38,14 @@ class RunPlan:
     splits: tuple[SplitIndices, ...]
 
     @classmethod
+    def from_mapping(cls, value: dict) -> RunPlan:
+        seeds = tuple(int(seed) for seed in value["seeds"])
+        splits = tuple(SplitIndices.from_mapping(split) for split in value["splits"])
+        if len(seeds) != len(splits):
+            raise ValueError("Recorded run_plan seeds and splits must have the same length.")
+        return cls(case_id=str(value["case_id"]), seeds=seeds, splits=splits)
+
+    @classmethod
     def build(cls, case: BenchmarkCase, dataset_size: int) -> RunPlan:
         training = case.training
         seed_policy = training.seeds
@@ -64,6 +72,14 @@ class RunPlan:
             seeds=tuple(int(seed) for seed in seeds),
             splits=tuple(splits),
         )
+
+    def validate_for_execution(self, *, runs: int, dataset_size: int) -> None:
+        if len(self.splits) != runs:
+            raise ValueError("Run plan length must equal case.training.runs.")
+        for split in self.splits:
+            indices = (*split.train, *split.val, *split.test)
+            if any(index < 0 or index >= dataset_size for index in indices):
+                raise ValueError("Recorded run plan contains an out-of-range dataset index.")
 
     def to_mapping(self) -> dict:
         return {

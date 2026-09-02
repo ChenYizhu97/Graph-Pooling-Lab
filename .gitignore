@@ -180,3 +180,8 @@ agent.md
 check_*.sh
 resume_*.sh
 run_*.sh
+
+# goals for codex
+goals/
+# audits for codex
+audits/

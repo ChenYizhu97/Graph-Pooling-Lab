@@ -5,7 +5,7 @@ from torch_geometric.utils import to_dense_adj, to_dense_batch
 
 from gplab.data.sparse import to_sparse_batch
 from ..functional import dense_connect
-from .contracts import PoolOutput
+from .pooling_output import PoolingOutput
 
 
 class DensePoolAdapter(torch.nn.Module):
@@ -20,9 +20,10 @@ class DensePoolAdapter(torch.nn.Module):
         x: Tensor,
         edge_index: Tensor,
         batch: Tensor,
-    ) -> PoolOutput:
+        edge_weight: Tensor | None = None,
+    ) -> PoolingOutput:
         dense_x, mask = to_dense_batch(x, batch=batch)
-        adj = to_dense_adj(edge_index, batch)
+        adj = to_dense_adj(edge_index, batch, edge_attr=edge_weight)
         assignment = (
             self.assignment_layer(dense_x, adj, mask)
             if self.pool_method == "diffpool"
@@ -56,7 +57,7 @@ class DensePoolAdapter(torch.nn.Module):
             pooled_adj,
         )
 
-        return PoolOutput(
+        return PoolingOutput(
             x=sparse_x,
             edge_index=sparse_edge_index,
             batch=sparse_batch,

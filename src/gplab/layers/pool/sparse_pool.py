@@ -8,7 +8,7 @@ from torch_geometric.nn.pool.select import SelectOutput
 from torch_geometric.nn.resolver import activation_resolver
 
 from ..functional import topk
-from .contracts import PoolOutput
+from .pooling_output import PoolingOutput
 
 
 class SparsePooling(torch.nn.Module):
@@ -30,9 +30,9 @@ class SparsePooling(torch.nn.Module):
         self,
         x: Tensor,
         edge_index: Tensor,
-        edge_attr: Optional[Tensor] = None,
         batch: Optional[Tensor] = None,
-    ) -> PoolOutput:
+        edge_weight: Optional[Tensor] = None,
+    ) -> PoolingOutput:
         if batch is None:
             batch = edge_index.new_zeros(x.size(0))
 
@@ -42,13 +42,18 @@ class SparsePooling(torch.nn.Module):
             raise RuntimeError("SparsePooling selection did not return scores.")
         perm = selection.node_index
         pooled_x = x[perm] * scores.unsqueeze(-1)
-        connected = self.connect(selection, edge_index, edge_attr, batch)
+        connected = self.connect(
+            selection,
+            edge_index,
+            edge_weight,
+            batch,
+        )
 
-        return PoolOutput(
+        return PoolingOutput(
             x=pooled_x,
             edge_index=connected.edge_index,
             batch=connected.batch,
-            edge_attr=connected.edge_attr,
+            edge_weight=connected.edge_attr,
             perm=perm,
             score=scores,
         )

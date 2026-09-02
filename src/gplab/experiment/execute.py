@@ -11,14 +11,14 @@ from gplab.data.dataset import load_dataset, split_dataset
 from gplab.benchmark.case import TrainingConfig
 from gplab.benchmark.plan import RunPlan, SplitIndices
 from gplab.benchmark.request import BenchmarkRequest
+from gplab.benchmark.comparability import resolve_dataset_connectivity_type, validate_comparability
 from gplab.experiment.record import build_record
 from gplab.experiment.reproducibility import (
     configure_runtime_threads,
     generate_loader,
     set_np_and_torch,
 )
-from gplab.model.classifier_plain import GraphClassifierPlain
-from gplab.model.classifier_sum import GraphClassifierSum
+from gplab.model import GraphClassifier
 from gplab.runtime import build_runtime_meta, console_separator, print_experiment_info
 from gplab.train_loop import evaluate_epoch, train_epoch
 
@@ -27,13 +27,13 @@ from gplab.train_loop import evaluate_epoch, train_epoch
 class PreparedRun:
     request: BenchmarkRequest
     dataset: object
-    dataset_profile: dict
+    dataset_stats: dict
     run_plan: RunPlan
     runtime: dict
     device: torch.device
 
 
-def _profile_dataset(dataset) -> dict:
+def _summarize_dataset(dataset) -> dict:
     if len(dataset) == 0:
         raise ValueError("Loaded dataset is empty.")
     avg_node_num = sum(int(graph.num_nodes) for graph in dataset) / len(dataset)
@@ -47,12 +47,24 @@ def _profile_dataset(dataset) -> dict:
 
 def prepare_run(request: BenchmarkRequest, device: torch.device, runtime: dict) -> PreparedRun:
     dataset = load_dataset(request.case.dataset)
-    dataset_profile = _profile_dataset(dataset)
+    dataset_stats = _summarize_dataset(dataset)
+    dataset_type = resolve_dataset_connectivity_type(dataset)
+    validate_comparability(
+        dataset_type=dataset_type,
+        pool_name=request.case.pool.name,
+        pre_conv=request.case.model.pre_conv,
+        post_conv=request.case.model.post_conv,
+    )
+    run_plan = request.fixed_run_plan or RunPlan.build(request.case, dataset_stats["num_graphs"])
+    run_plan.validate_for_execution(
+        runs=request.case.training.runs,
+        dataset_size=dataset_stats["num_graphs"],
+    )
     return PreparedRun(
         request=request,
         dataset=dataset,
-        dataset_profile=dataset_profile,
-        run_plan=RunPlan.build(request.case, dataset_profile["num_graphs"]),
+        dataset_stats=dataset_stats,
+        run_plan=run_plan,
         runtime=runtime,
         device=device,
     )
@@ -64,15 +76,14 @@ def _build_model(
 ):
     case = prepared.request.case
     execution = prepared.request.execution
-    model_class = GraphClassifierPlain if case.model.variant == "plain" else GraphClassifierSum
-    return model_class(
-        prepared.dataset_profile["num_node_features"],
-        prepared.dataset_profile["num_classes"],
+    return GraphClassifier(
+        prepared.dataset_stats["num_node_features"],
+        prepared.dataset_stats["num_classes"],
         pool_method=case.pool.name,
         ratio=case.pool.ratio,
         pool_nonlinearity=case.pool.nonlinearity,
         config=case.model,
-        avg_node_num=prepared.dataset_profile["avg_node_num"],
+        avg_node_num=prepared.dataset_stats["avg_node_num"],
         activation_checkpoint=execution.activation_checkpoint,
     ).to(device)
 

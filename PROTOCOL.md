@@ -33,7 +33,7 @@ belong to `ExecutionOptions`, not to the benchmark case.
 All benchmark cases use one shared backbone shape:
 
 ```text
-pre_gnn -> conv1 -> pool -> conv2 -> readout -> post_gnn
+pre_gnn -> pre_conv -> pool -> post_conv -> readout -> post_gnn
 ```
 
 Model rules:
@@ -43,10 +43,11 @@ Model rules:
 - `post_gnn[0]` must equal `2 * hidden_features`.
 - `variant=sum` adds pre-pooling and post-pooling graph embeddings.
 - `variant=plain` uses only the post-pooling graph embedding.
+- `pre_conv` and `post_conv` are separate, explicit encoder roles.
 
 ## Pool Protocol
 
-All pooling modules must return `PoolOutput`.
+All pooling modules must return `PoolingOutput`.
 
 Required fields:
 
@@ -56,19 +57,24 @@ Required fields:
 
 Optional fields:
 
-- `edge_attr`
 - `edge_weight`
 - `perm`
 - `score`
 - `aux_loss`
 
-Custom pooling factories use:
+`edge_weight` is the only scalar-connectivity channel in the GPLab pool
+contract. Adapter-local names such as PyG's `edge_attr` must be converted at
+the adapter boundary.
+
+Custom pooling profiles use:
 
 ```text
-<python_module>:<factory_name>
+<python_module>:<profile_name>
 ```
 
-The returned module must implement `reset_parameters()`.
+The referenced object must be a `PoolingProfile` containing at least one
+declared `PoolingSignature` and a builder. The builder must return a pooling
+module that implements `reset_parameters()`.
 
 Dense assignment pooling methods (`mincutpool`, `diffpool`, `densepool`) follow
 one rule: input masks suppress padded input nodes before pooling, output nodes
@@ -97,6 +103,11 @@ Benchmark grouping includes:
 - `case.pool.nonlinearity`
 - `case.training`
 - resolved `run_plan.seeds`
+
+`case.pool.ratio` is retained here as an experiment-specific identity field for
+the current same-ratio protocol. Equal ratios are not a universal condition of
+pooling comparability; heterogeneous size-control strategies require a separate
+benchmark design decision.
 
 Benchmark grouping excludes:
 

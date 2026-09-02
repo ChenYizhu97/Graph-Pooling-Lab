@@ -3,7 +3,7 @@ from typing import Any
 import numpy as np
 
 from gplab.benchmark.case import BenchmarkCase
-from gplab.benchmark.comparison import compute_record_benchmark_key
+from gplab.benchmark.identity import compute_record_benchmark_key
 from gplab.benchmark.execution import ExecutionOptions
 from gplab.benchmark.plan import RunPlan
 from gplab.experiment.identity import attach_record_id, require_record_id

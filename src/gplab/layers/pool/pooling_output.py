@@ -1,3 +1,4 @@
+"""Pooling output value and boundary validation."""
 from dataclasses import dataclass
 from typing import Optional
 
@@ -6,11 +7,10 @@ from torch import Tensor
 
 
 @dataclass
-class PoolOutput:
+class PoolingOutput:
     x: Tensor
     edge_index: Tensor
     batch: Tensor
-    edge_attr: Optional[Tensor] = None
     edge_weight: Optional[Tensor] = None
     perm: Optional[Tensor] = None
     score: Optional[Tensor] = None
@@ -39,10 +39,10 @@ def _validate_optional_tensor(
         raise RuntimeError(f"Pooling '{pool_name}': device mismatch for {field}.")
 
 
-def validate_pool_output(output, pool_name: str) -> None:
-    if not isinstance(output, PoolOutput):
+def validate_pooling_output(output, pool_name: str) -> None:
+    if not isinstance(output, PoolingOutput):
         raise TypeError(
-            f"Pooling method '{pool_name}' must return PoolOutput, "
+            f"Pooling method '{pool_name}' must return PoolingOutput, "
             f"got {type(output).__name__}."
         )
 
@@ -63,12 +63,10 @@ def validate_pool_output(output, pool_name: str) -> None:
     if edge_index.device != device or batch.device != device:
         raise RuntimeError(f"Pooling '{pool_name}': required tensors must share one device.")
 
-    for field in ("edge_attr", "edge_weight", "perm", "score", "aux_loss"):
+    for field in ("edge_weight", "perm", "score", "aux_loss"):
         _validate_optional_tensor(getattr(output, field), field, pool_name, device)
 
     edge_count = edge_index.size(1)
-    if output.edge_attr is not None and output.edge_attr.size(0) != edge_count:
-        raise ValueError(f"Pooling '{pool_name}': edge_attr length must equal edge count.")
     if output.edge_weight is not None:
         if output.edge_weight.dim() != 1 or output.edge_weight.size(0) != edge_count:
             raise ValueError(f"Pooling '{pool_name}': edge_weight must have shape [E].")

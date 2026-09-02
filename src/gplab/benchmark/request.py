@@ -4,14 +4,16 @@ from dataclasses import dataclass
 from typing import Optional
 
 from .case import BenchmarkCase
-from .comparison import compute_case_id
+from .identity import compute_case_id
 from .execution import ExecutionOptions
+from .plan import RunPlan
 
 
 @dataclass(frozen=True)
 class BenchmarkRequest:
     case: BenchmarkCase
     execution: ExecutionOptions
+    fixed_run_plan: Optional[RunPlan] = None
 
     @classmethod
     def from_mapping(cls, value: dict) -> BenchmarkRequest:
@@ -30,6 +32,7 @@ class BenchmarkRequest:
         return cls(
             case=BenchmarkCase.from_record(record),
             execution=ExecutionOptions.from_record(record, log_file=replay_log_file),
+            fixed_run_plan=RunPlan.from_mapping(record["run_plan"]),
         )
 
     @property

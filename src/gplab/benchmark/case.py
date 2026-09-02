@@ -4,12 +4,12 @@ from dataclasses import asdict, dataclass
 import math
 from typing import Optional
 
-from gplab.utils.registry import SUPPORTED_CONVS
+from gplab.data.profiles import get_dataset_profile
+from gplab.layers.conv.profiles import CONV_PROFILES
+from gplab.layers.pool.profiles import validate_pooling_profile_name
 from gplab.utils.validation import (
-    validate_dataset_value,
     validate_model_variant_value,
     validate_pool_ratio_value,
-    validate_pool_value,
     validate_seed_mode_value,
 )
 
@@ -19,7 +19,8 @@ class ModelConfig:
     hidden_features: int
     nonlinearity: str
     p_dropout: float
-    conv_layer: str
+    pre_conv: str
+    post_conv: str
     pre_gnn: tuple[int, ...]
     post_gnn: tuple[int, ...]
     variant: str
@@ -31,17 +32,18 @@ class ModelConfig:
             raise ValueError("case.model.nonlinearity must be non-empty.")
         if not 0.0 <= self.p_dropout < 1.0:
             raise ValueError("case.model.p_dropout must be in [0, 1).")
-        if self.conv_layer not in SUPPORTED_CONVS:
-            raise ValueError(
-                f"Unsupported case.model.conv_layer '{self.conv_layer}'. "
-                f"Supported layers: {', '.join(SUPPORTED_CONVS)}."
-            )
+        for field, value in (("pre_conv", self.pre_conv), ("post_conv", self.post_conv)):
+            if value not in CONV_PROFILES:
+                raise ValueError(
+                    f"Unsupported case.model.{field} '{value}'. "
+                    f"Supported layers: {', '.join(CONV_PROFILES)}."
+                )
         if not self.pre_gnn or any(width <= 0 for width in self.pre_gnn):
             raise ValueError("case.model.pre_gnn must be a non-empty array of positive integers.")
         if self.pre_gnn[-1] != self.hidden_features:
             raise ValueError(
                 "case.model.pre_gnn must end with case.model.hidden_features "
-                "so conv1 receives the configured width."
+                "so pre_conv receives the configured width."
             )
         if not self.post_gnn or any(width <= 0 for width in self.post_gnn):
             raise ValueError("case.model.post_gnn must be a non-empty array of positive integers.")
@@ -59,7 +61,8 @@ class ModelConfig:
             hidden_features=int(value["hidden_features"]),
             nonlinearity=str(value["nonlinearity"]),
             p_dropout=float(value["p_dropout"]),
-            conv_layer=str(value["conv_layer"]),
+            pre_conv=str(value["pre_conv"]),
+            post_conv=str(value["post_conv"]),
             pre_gnn=tuple(int(width) for width in value["pre_gnn"]),
             post_gnn=tuple(int(width) for width in value["post_gnn"]),
             variant=str(value["variant"]),
@@ -79,14 +82,14 @@ class PoolConfig:
     nonlinearity: str = "tanh"
 
     def __post_init__(self) -> None:
-        validate_pool_value(self.name)
+        validate_pooling_profile_name(self.name)
         validate_pool_ratio_value(self.ratio)
         if not self.nonlinearity:
             raise ValueError("case.pool.nonlinearity must be non-empty.")
 
     @property
     def source(self) -> str:
-        return "custom_factory" if ":" in self.name else "builtin"
+        return "custom_profile" if ":" in self.name else "builtin"
 
     def to_mapping(self) -> dict:
         return {
@@ -231,7 +234,7 @@ class BenchmarkCase:
     training: TrainingConfig
 
     def __post_init__(self) -> None:
-        validate_dataset_value(self.dataset)
+        get_dataset_profile(self.dataset)
 
     @classmethod
     def from_mapping(cls, value: dict) -> BenchmarkCase:

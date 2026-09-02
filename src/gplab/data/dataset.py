@@ -1,13 +1,11 @@
 import numpy as np
 from torch_geometric.data import Dataset
-from torch_geometric.datasets import TUDataset
 
-from gplab.utils.validation import validate_dataset_value
+from .profiles import get_dataset_profile
 
 
 def load_dataset(dataset: str) -> Dataset:
-    validate_dataset_value(dataset)
-    return TUDataset(root="/tmp/TUDataset", name=dataset, use_node_attr=True)
+    return get_dataset_profile(dataset).build()
 
 
 def build_split_indices(

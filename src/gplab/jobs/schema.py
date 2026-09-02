@@ -166,9 +166,10 @@ def normalize_job_shape(job: dict) -> dict:
     _reject_unknown_fields(pool, allowed=POOL_FIELDS, label="case.pool")
     _require_keys(pool, required=POOL_REQUIRED_FIELDS, label="case.pool")
 
+    raw_model = require_mapping(case.get("model", {}), label="case.model")
     model = {
         **deepcopy(AUTOMATION_MODEL_DEFAULTS),
-        **require_mapping(case.get("model", {}), label="case.model"),
+        **raw_model,
     }
     _reject_unknown_fields(model, allowed=MODEL_FIELDS, label="case.model")
 
@@ -219,7 +220,8 @@ def normalize_job_shape(job: dict) -> dict:
                     field_name="case.model.nonlinearity",
                 ),
                 "p_dropout": _normalize_float(model["p_dropout"], field_name="case.model.p_dropout"),
-                "conv_layer": _require_string(model["conv_layer"], field_name="case.model.conv_layer"),
+                "pre_conv": _require_string(model["pre_conv"], field_name="case.model.pre_conv"),
+                "post_conv": _require_string(model["post_conv"], field_name="case.model.post_conv"),
                 "pre_gnn": _normalize_int_list(model["pre_gnn"], field_name="case.model.pre_gnn"),
                 "post_gnn": _normalize_int_list(model["post_gnn"], field_name="case.model.post_gnn"),
                 "variant": _require_string(model["variant"], field_name="case.model.variant"),

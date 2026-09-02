@@ -6,9 +6,10 @@ from .case import (
     SplitConfig,
     TrainingConfig,
 )
-from .comparison import compute_benchmark_key, compute_case_id, compute_record_benchmark_key
+from .identity import compute_benchmark_key, compute_case_id, compute_record_benchmark_key
 from .execution import ExecutionOptions
-from .plan import SplitIndices
+from .plan import RunPlan, SplitIndices
+from .comparability import comparable_pools, validate_comparability
 from .request import BenchmarkRequest
 from .seeds import resolve_seeds
 
@@ -19,11 +20,14 @@ __all__ = [
     "ModelConfig",
     "PoolConfig",
     "SeedPolicy",
+    "RunPlan",
     "SplitIndices",
     "SplitConfig",
     "TrainingConfig",
     "compute_benchmark_key",
     "compute_case_id",
     "compute_record_benchmark_key",
+    "comparable_pools",
     "resolve_seeds",
+    "validate_comparability",
 ]

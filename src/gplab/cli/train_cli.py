@@ -20,7 +20,7 @@ app = typer.Typer(pretty_exceptions_enable=False)
 def main(
     pool: Annotated[
         Optional[str],
-        typer.Option(help="Pooling method name or <module:factory> for custom pooling."),
+        typer.Option(help="Pooling method name or <module:profile> for custom pooling."),
     ] = None,
     pool_ratio: Annotated[
         Optional[float],

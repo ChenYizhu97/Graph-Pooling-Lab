@@ -12,7 +12,7 @@ from torch_geometric.nn.resolver import activation_resolver
 from torch_geometric.typing import OptTensor
 from torch_geometric.utils import softmax
 
-from .contracts import PoolOutput
+from .pooling_output import PoolingOutput
 
 
 class SAGPooling(torch.nn.Module):
@@ -106,25 +106,25 @@ class SAGPooling(torch.nn.Module):
         self,
         x: Tensor,
         edge_index: Tensor,
-        edge_attr: OptTensor = None,
         batch: OptTensor = None,
+        edge_weight: OptTensor = None,
         attn: OptTensor = None,
-    ) -> PoolOutput:
+    ) -> PoolingOutput:
         r"""
         Args:
             x (torch.Tensor): The node feature matrix.
             edge_index (torch.Tensor): The edge indices.
-            edge_attr (torch.Tensor, optional): The edge features.
-                (default: :obj:`None`)
             batch (torch.Tensor, optional): The batch vector
                 :math:`\mathbf{b} \in {\{ 0, \ldots, B-1\}}^N`, which assigns
                 each node to a specific example. (default: :obj:`None`)
+            edge_weight (torch.Tensor, optional): Scalar edge connectivity.
+                (default: :obj:`None`)
             attn (torch.Tensor, optional): Optional node-level matrix to use
                 for computing attention scores instead of using the node
                 feature matrix :obj:`x`. (default: :obj:`None`)
 
         Returns:
-            PoolOutput with pooled graph structure
+            PoolingOutput with pooled graph structure
         """
         if batch is None:
             batch = edge_index.new_zeros(x.size(0))
@@ -142,13 +142,18 @@ class SAGPooling(torch.nn.Module):
         x = x[perm] * score.view(-1, 1)
         x = self.multiplier * x if self.multiplier != 1 else x
 
-        connect_out = self.connect(select_out, edge_index, edge_attr, batch)
+        connect_out = self.connect(
+            select_out,
+            edge_index,
+            edge_weight,
+            batch,
+        )
 
-        return PoolOutput(
+        return PoolingOutput(
             x=x,
             edge_index=connect_out.edge_index,
             batch=connect_out.batch,
-            edge_attr=connect_out.edge_attr,
+            edge_weight=connect_out.edge_attr,
             perm=perm,
             score=score,
         )

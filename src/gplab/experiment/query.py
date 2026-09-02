@@ -4,12 +4,12 @@ from dataclasses import dataclass
 import shlex
 from typing import Optional
 
-from gplab.benchmark.comparison import compute_record_benchmark_key
+from gplab.benchmark.identity import compute_record_benchmark_key
+from gplab.data.profiles import get_dataset_profile
 from gplab.experiment.record import summarize_record
+from gplab.layers.pool.profiles import validate_pooling_profile_name
 from gplab.utils.validation import (
-    validate_dataset_value,
     validate_model_variant_value,
-    validate_pool_value,
 )
 
 
@@ -57,12 +57,12 @@ def validate_query_spec(spec: QuerySpec) -> None:
         )
     if spec.dataset is not None:
         try:
-            validate_dataset_value(spec.dataset)
+            get_dataset_profile(spec.dataset)
         except ValueError as exc:
             raise QuerySpecError(str(exc), field="dataset") from exc
     if spec.pool is not None:
         try:
-            validate_pool_value(spec.pool)
+            validate_pooling_profile_name(spec.pool)
         except ValueError as exc:
             raise QuerySpecError(str(exc), field="pool") from exc
     if spec.model_variant is not None:
