@@ -1,109 +1,72 @@
 # Graph Pooling Lab (GPLab)
 
-GPLab is a lightweight benchmark harness for graph pooling methods on graph
-classification tasks. Its core abstraction is a `BenchmarkCase`: a dataset,
-model, pooling method, and training protocol executed under one fixed benchmark
-protocol.
+Graph Pooling Lab (GPLab) is a benchmark framework for evaluating hierarchical graph pooling methods under controlled and comparable experimental settings.
 
-Read [PROTOCOL.md](PROTOCOL.md) for the stable benchmark rules. Automation
-clients should also read [AGENT_REFERENCE.md](AGENT_REFERENCE.md).
+Graph pooling methods can differ not only in how they reduce a graph, but also in the graph information they accept and the type of pooled graph they produce. A benchmark that ignores these differences may unintentionally discard method-specific information or compare methods under incompatible settings.
+
+GPLab is designed to make these issues explicit while keeping the benchmark workflow practical.
+
+Read [PROTOCOL.md](./PROTOCOL.md) for the stable benchmark rules. Automation clients should also read [AGENT_REFERENCE.md](./AGENT_REFERENCE.md).
+
+## Comparability-Aware Benchmarking
+
+GPLab separates the model pipeline into:
+
 
 ```mermaid
 flowchart LR
-    CLI["CLI / TOML"] --> A["BenchmarkRequest"]
-    JOB["Job JSON"] --> A
-    REC["ExperimentRecord replay"] --> A
-    A --> B["PreparedRun"]
-    B --> C["Shared Graph Classifier"]
-    C --> D{"Pooling"}
-    D --> E["Sparse Poolers"]
-    D --> F["Dense Poolers via Adapter"]
-    E --> G["Shared Downstream Conv + Readout"]
-    F --> G
-    G --> H["Multi-seed Train / Val / Test"]
-    H --> I["ExperimentRecord"]
-    I --> J["gplab-query"]
-    I --> K["gplab-replay"]
-    K --> REC
+    A["Input graph"] --> B["Node MLP"]
+    B --> C["Pre-pooling GNN"]
+    C --> D["Pooling"]
+    D --> E["Post-pooling GNN"]
+    E --> F["Readout"]
+    F --> G["Prediction"]
 ```
 
-## Scope
+The surrounding architecture and experimental protocol are controlled, while the pooling operator is the component being compared.
 
-`BenchmarkRequest` is the executable request wrapper around a `BenchmarkCase`
-and `ExecutionOptions`. `PreparedRun` adds the loaded dataset profile and
-resolved `RunPlan` with concrete seeds and split indices.
+Before an experiment is executed, GPLab checks whether:
 
-All executable entrypoints adapt into the same request object first:
+- the selected pooling method supports the graph information it receives;
+- the pooled graph can be correctly processed by the downstream GNN;
+- valid information produced by pooling is not silently discarded;
+- incompatible configurations are rejected rather than implicitly converted.
 
-- human CLI / TOML options build a `BenchmarkRequest`
-- Job JSON validates into a `BenchmarkRequest`
-- replay rebuilds a `BenchmarkRequest` from an `ExperimentRecord`
+This allows different pooling methods to retain their own graph-coarsening behavior without forcing all methods into an artificially identical representation.
 
-`request.case_id` identifies the benchmark-defining case. `request.to_mapping()`
-is used only when GPLab needs to print a request-shaped JSON payload, such as a
-replay job.
 
-GPLab currently targets:
+## Graph Connectivity
 
-- TU datasets only
-- graph classification only
-- one pooling stage per model
-- one shared downstream path after pooling
+GPLab currently distinguishes between:
 
-It is a benchmark harness, not a general-purpose graph learning framework.
+- **binary connectivity**, where edges represent connectivity only;
+- **scalar-valued connectivity**, where edges additionally carry meaningful scalar values.
 
-## Layout
+Pooling methods declare the connectivity transformations they support, and downstream GNN layers declare the connectivity they can process.
 
-```text
-src/gplab/
-  benchmark/      # BenchmarkCase, BenchmarkRequest, RunPlan, comparison keys
-  cli/            # gplab-* entrypoints
-  data/           # TU loading and split helpers
-  experiment/     # execution, records, query/report views, result assembly
-  jobs/           # Job JSON schema and request adapter
-  layers/         # conv/pool profiles, types, and adapters
-  model/          # shared graph classifier backbone
-```
 
-## Execution Flow
+## Current Direction
 
-Agent execution:
+GPLab is being developed as the experimental framework accompanying our study of **comparable evaluation in hierarchical graph pooling**.
 
-```text
-gplab-run-job
-  -> jobs.io.load_job_*
-  -> jobs.schema.normalize_job_shape
-  -> jobs.request.request_from_job
-  -> BenchmarkRequest
-  -> experiment.train_result.execute_train_request
-  -> experiment.execute.run_experiment
-  -> experiment.record.build_record
-  -> experiment.train_result.persist_record
-  -> train_result
-```
+The current focus is on:
 
-Record query and replay:
+- controlled pooling comparisons;
+- explicit pooling input/output compatibility;
+- reproducible experiment configuration;
+- fair handling of pooled graph information;
+- analysis of predictive performance, graph reduction, and computational behavior
 
-```text
-gplab-query
-  -> experiment.record_log.load_record_log
-  -> experiment.query.build_query_result / build_benchmark_report
-
-gplab-replay
-  -> experiment.record_log.load_record_log
-  -> experiment.record_log.find_record_by_id
-  -> BenchmarkRequest.from_record_for_replay
-  -> optional execute_train_request
-```
 
 ## Install
+
+GPLab requires Python 3.10 or newer and depends on PyTorch, PyTorch Geometric,
+Typer, Rich, TOML, NumPy, and tqdm.
 
 ```bash
 conda activate torch_env
 python3 -m pip install -e .
 ```
-
-GPLab depends on PyTorch, PyG, Typer, Rich, TOML, NumPy, and tqdm.
 
 ## Quick Start
 
@@ -113,13 +76,7 @@ Run one human-oriented experiment:
 gplab-train --pool sagpool --pool-ratio 0.5 --dataset PROTEINS
 ```
 
-Use the plain model variant:
-
-```bash
-gplab-train --pool sagpool --pool-ratio 0.5 --dataset PROTEINS --model-variant plain
-```
-
-Append the record to a JSONL log:
+Append its `ExperimentRecord` to a JSONL log:
 
 ```bash
 gplab-train \
@@ -130,7 +87,17 @@ gplab-train \
   --tag baseline_proteins
 ```
 
-Replay an exact seed list:
+Use the post-pooling-only model variant:
+
+```bash
+gplab-train \
+  --pool sagpool \
+  --pool-ratio 0.5 \
+  --dataset PROTEINS \
+  --model-variant plain
+```
+
+Run an exact seed list:
 
 ```bash
 gplab-train \
@@ -141,17 +108,13 @@ gplab-train \
   --seed-list 101,202,303
 ```
 
-`gplab-train` is a human convenience entrypoint. Automation should use
-`gplab-run-job` with Job JSON.
+`gplab-train` is the human convenience entrypoint. Automation should submit one
+Job JSON request per `gplab-run-job` process.
 
-## Job JSON
+## Job Configuration
 
-Machine-facing execution uses Job JSON. This is the agent-facing request format;
-GPLab fills optional defaults, then validates the result into
-`BenchmarkRequest` before execution.
-
-A Job JSON describes exactly one experiment case. It is not a batch manifest:
-dataset, pool, ratio, model, and training settings are single values.
+A Job JSON describes exactly one experiment case. Optional fields are filled
+from GPLab's automation defaults before the request is validated.
 
 ```json
 {
@@ -191,52 +154,68 @@ dataset, pool, ratio, model, and training settings are single values.
     }
   },
   "execution": {
-    "log_file": null,
-    "tag": null,
+    "log_file": "runs/bench.jsonl",
+    "tag": "baseline_proteins",
     "activation_checkpoint": false
   }
 }
 ```
 
-Run the job:
+Run from a file, inline JSON, or stdin:
 
 ```bash
 gplab-run-job --job-file job.json --output-format json
-```
-
-Or pass JSON directly:
-
-```bash
 gplab-run-job --job-json '{"case":{"dataset":"MUTAG","pool":{"name":"nopool","ratio":0.5},"training":{"runs":1,"epochs":1,"patience":0}}}' --output-format json
-```
-
-Or from stdin:
-
-```bash
 cat job.json | gplab-run-job --job-stdin --output-format json
 ```
 
-`gplab-run-job` validates the job before execution. With `--output-format json`,
-invalid jobs return `ok=false`, `kind="job_error"`, `error.type="config_error"`,
-and a field-specific message for the agent to fix and retry.
-Successful responses include the canonical `record`, a derived `summary`, and a
-small `context` object describing the entry source.
+Provide exactly one of `--job-file`, `--job-json`, or `--job-stdin`. With JSON
+output, stdout contains exactly one response object; progress and diagnostics go
+to stderr. Invalid jobs return `ok=false`, `kind="job_error"`, and a structured,
+field-specific error.
 
-With `--output-format json`, stdout is reserved for exactly one JSON response.
-Progress, diagnostics, and third-party output are redirected to stderr.
+A successful response contains the canonical `record`, a derived `summary`, and
+entrypoint `context`. If several cases run concurrently, give them separate log
+files or serialize JSONL appends externally.
 
-One `gplab-run-job` process executes exactly one Job JSON request and produces
-one `ExperimentRecord`. If an agent schedules many cases concurrently, it must
-use one process per case. Do not let multiple processes append to the same
-`execution.log_file`; use separate JSONL files or serialize writes externally.
+See [AGENT_REFERENCE.md](AGENT_REFERENCE.md) for the complete schema and output
+contract.
 
-## Automation Entrypoints
+## Records, Querying, and Replay
 
-- `gplab-run-job`: execute one Job JSON request.
-- `gplab-query`: summarize JSONL records.
-- `gplab-replay`: rebuild and optionally rerun one record.
+One JSONL line is one canonical `ExperimentRecord` containing:
+
+- the benchmark-defining `case`;
+- execution-only settings;
+- the resolved seeds and concrete split indices in `run_plan`;
+- runtime metadata;
+- per-run and aggregate results;
+- a content-derived `record_id`.
+
+Query records or build a grouped benchmark report:
+
+```bash
+gplab-query --log-file runs/bench.jsonl
+gplab-query --log-file runs/bench.jsonl --report
+gplab-query --log-file runs/bench.jsonl --model-variant plain
+gplab-query --log-file runs/bench.jsonl --show-case --show-replay
+```
+
+Replay reconstructs a request from the stored case and resolved run plan. It
+uses the recorded seed list and the exact stored train/validation/test indices:
+
+```bash
+gplab-replay --log-file runs/bench.jsonl --record-id <record_id>
+gplab-replay --log-file runs/bench.jsonl --record-id <record_id> --run
+```
+
+Without `--run`, replay only reconstructs the request and checks selected runtime
+metadata; JSON output includes that request in the top-level `job` field. Combine
+`--run` with `--replay-log-file` to append a rerun to another JSONL log.
 
 ## Supported Datasets
+
+GPLab currently supports graph classification on these TU datasets:
 
 - `MUTAG`
 - `PROTEINS`
@@ -248,47 +227,18 @@ use one process per case. Do not let multiple processes append to the same
 - `NCI1`
 - `COX2`
 
-## Pooling Methods
-
-Built-in pools:
-
-- `nopool`
-- `topkpool`
-- `sagpool`
-- `asapool`
-- `sparsepool`
-- `mincutpool`
-- `diffpool`
-- `densepool`
-
-Sparse poolers operate directly on sparse graph batches. Dense poolers are
-wrapped by `DensePoolAdapter`, which converts sparse input batches to dense
-tensors, applies dense pooling, and converts fixed cluster slots back to sparse
-format for the shared downstream backbone.
+The loader uses `TUDataset(..., use_node_attr=True)`. GPLab is a focused pooling
+benchmark, not a general-purpose graph-learning framework; it currently supports
+one pooling stage per model and one shared post-pooling path.
 
 ## Custom Pooling Profiles
 
-Custom pooling profiles use:
-
-```text
-<python_module>:<profile_name>
-```
-
-The referenced object must be a `PoolingProfile` containing the builder and
-the method's declared connectivity signatures:
+Custom profiles use `<python_module>:<profile_name>`. The referenced object must
+be a `PoolingProfile` with a builder and at least one declared signature:
 
 ```python
 from gplab.graph import ConnectivityType
 from gplab.layers.pool import PoolingProfile, PoolingSignature
-
-
-def build_pool(
-    in_channels: int,
-    ratio: float,
-    avg_node_num,
-    nonlinearity,
-):
-    ...
 
 
 CUSTOM_POOL_PROFILE = PoolingProfile(
@@ -302,63 +252,35 @@ CUSTOM_POOL_PROFILE = PoolingProfile(
 )
 ```
 
-The builder must return a `torch.nn.Module`; the module must return
-`PoolingOutput` and implement `reset_parameters()`. Its forward path receives `x`,
-`edge_index`, `batch`, and optional scalar connectivity through `edge_weight`;
-`PoolingOutput.edge_weight` is the corresponding output channel. See
-`examples/custom_pool_plugin.py` for a complete profile.
+The builder receives `in_channels`, `ratio`, `avg_node_num`, and `nonlinearity`
+and must return a `torch.nn.Module` (or `None` for no pooling). A pooling module
+must:
 
-## Experiment Records
+- accept `x`, `edge_index`, `batch`, and optional `edge_weight`;
+- return `PoolingOutput` with `x`, `edge_index`, and `batch`, plus optional
+  `edge_weight`, `perm`, `score`, and `aux_loss`;
+- implement `reset_parameters()`.
 
-Each JSONL record is an `ExperimentRecord`: a `dict[str, Any]` with:
+GPLab applies the declared signature to custom profiles during the same
+compatibility validation as built-ins. See
+[`examples/custom_pool_plugin.py`](examples/custom_pool_plugin.py) for a complete
+profile.
 
-- `case`: the benchmark case
-- `execution`: execution-only options
-- `run_plan`: resolved seeds and split indices
-- `runtime`: environment metadata
-- `result`: per-run and aggregate metrics
-- `record_id`: content hash
+## Configuration and Layout
 
-The full schema is documented in [AGENT_REFERENCE.md](AGENT_REFERENCE.md).
+`config/model.toml` defines model defaults, including the independent
+`pre_conv` and `post_conv` roles. `config/experiment.toml` defines training,
+split, seed, and execution defaults. CLI flags override these files before a
+`BenchmarkCase` is built.
 
-Records are the persisted experiment output. One JSONL line is one
-`ExperimentRecord`; query and replay both load records through the shared
-`experiment.record_log` boundary. Replay uses the stored `case`, `execution`,
-and resolved `run_plan.seeds` to rebuild an exact request with
-`case.training.seeds.mode="list"`.
-
-The `record` field in `train_result` is the canonical persisted object.
-`summary` is derived from the record, and `context` only describes the command
-entrypoint.
-
-Query records:
-
-```bash
-gplab-query --log-file runs/bench.jsonl --report
-gplab-query --log-file runs/bench.jsonl --model-variant plain
-gplab-query --log-file runs/bench.jsonl --show-case --show-replay
+```text
+src/gplab/
+  benchmark/      # cases, requests, run plans, identities, compatibility
+  cli/            # gplab-* entrypoints
+  data/           # TU profiles, loading, and split helpers
+  experiment/     # execution, records, querying, replay support
+  graph/          # connectivity semantics
+  jobs/           # Job JSON schema and request adapter
+  layers/         # GNN and pooling profiles and adapters
+  model/          # shared graph classifier
 ```
-
-`gplab-query` reads JSONL `ExperimentRecord` entries and returns derived
-summaries or grouped benchmark reports. JSON output includes `context`; query
-summaries are not canonical records.
-
-Replay one record:
-
-```bash
-gplab-replay --log-file runs/bench.jsonl --record-id <record_id>
-gplab-replay --log-file runs/bench.jsonl --record-id <record_id> --run
-```
-
-## Configuration
-
-`config/model.toml` controls model defaults.
-
-`config/experiment.toml` contains:
-
-- `[training]`
-- `[training.split]`
-- `[training.seeds]`
-- `[execution]`
-
-CLI flags override these defaults before building a `BenchmarkCase`.

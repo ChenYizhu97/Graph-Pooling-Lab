@@ -167,9 +167,7 @@ cython_debug/
 #.idea/
 
 # local research notes
-research.md
-pool.md
-kb.md
+kb/
 
 # local planning notes
 *plan*.md
