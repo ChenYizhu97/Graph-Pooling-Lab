@@ -37,6 +37,24 @@ class _Dataset(list):
     connectivity_type = "binary"
 
 
+class _RecordingPool(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.seen_edge_weight = None
+
+    def reset_parameters(self):
+        pass
+
+    def forward(self, *, x, edge_index, batch, edge_weight=None):
+        self.seen_edge_weight = edge_weight
+        return PoolingOutput(
+            x=x,
+            edge_index=edge_index,
+            batch=batch,
+            edge_weight=edge_weight,
+        )
+
+
 def _case(pool="nopool", pre_conv="GCN", post_conv="GCN", variant="plain"):
     return BenchmarkCase.from_mapping({
         "dataset": "MUTAG",
@@ -207,6 +225,107 @@ class ComparabilityTests(unittest.TestCase):
         )
         self.assertEqual(result.output_type, ConnectivityType.SCALAR)
 
+    def test_scalar_graph_allows_pre_gin_and_preserves_weights_for_pooling(self):
+        result = validate_comparability(
+            dataset_type=ConnectivityType.SCALAR,
+            pool_name="nopool",
+            pre_conv="GIN",
+            post_conv="GCN",
+        )
+        self.assertEqual(result.output_type, ConnectivityType.SCALAR)
+        self.assertEqual(
+            comparable_pools(
+                dataset_type=ConnectivityType.SCALAR,
+                pre_conv="GIN",
+                post_conv="GCN",
+            ),
+            ("nopool",),
+        )
+
+        model = GraphClassifier(
+            2,
+            2,
+            _case(pre_conv="GIN", post_conv="GCN").model,
+            pool_method="nopool",
+            ratio=0.5,
+            avg_node_num=3,
+        )
+        recording_pool = _RecordingPool()
+        model.pool_module = recording_pool
+        pre_conv_kwargs = {}
+
+        def observe_pre_conv(_module, _args, kwargs, _output):
+            pre_conv_kwargs.update(kwargs)
+
+        handle = model.pre_conv.register_forward_hook(observe_pre_conv, with_kwargs=True)
+        edge_weight = torch.tensor([0.25, 0.75, 0.5, 1.25])
+        graph = Data(
+            x=torch.randn(3, 2),
+            edge_index=torch.tensor([[0, 1, 1, 2], [1, 0, 2, 1]]),
+            edge_weight=edge_weight,
+            batch=torch.zeros(3, dtype=torch.long),
+        )
+        try:
+            model(graph)
+        finally:
+            handle.remove()
+
+        self.assertNotIn("edge_weight", pre_conv_kwargs)
+        self.assertIs(recording_pool.seen_edge_weight, edge_weight)
+
+    def test_scalar_pool_output_with_post_gin_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "post-pooling encoder 'GIN'"):
+            validate_comparability(
+                dataset_type=ConnectivityType.SCALAR,
+                pool_name="nopool",
+                pre_conv="GIN",
+                post_conv="GIN",
+            )
+
+    def test_weight_capable_pre_convolutions_still_consume_scalar_values(self):
+        edge_weight = torch.tensor([0.25, 0.75, 0.5, 1.25])
+        graph = Data(
+            x=torch.randn(3, 2),
+            edge_index=torch.tensor([[0, 1, 1, 2], [1, 0, 2, 1]]),
+            edge_weight=edge_weight,
+            batch=torch.zeros(3, dtype=torch.long),
+        )
+        for conv_name in ("GCN", "GraphConv"):
+            with self.subTest(conv_name=conv_name):
+                model = GraphClassifier(
+                    2,
+                    2,
+                    _case(pre_conv=conv_name, post_conv=conv_name).model,
+                    pool_method="nopool",
+                    ratio=0.5,
+                    avg_node_num=3,
+                )
+                recording_pool = _RecordingPool()
+                model.pool_module = recording_pool
+                seen = {}
+
+                def observe_pre_conv(_module, _args, kwargs, _output):
+                    seen["pre"] = kwargs.get("edge_weight")
+
+                def observe_post_conv(_module, _args, kwargs, _output):
+                    seen["post"] = kwargs.get("edge_weight")
+
+                pre_handle = model.pre_conv.register_forward_hook(
+                    observe_pre_conv, with_kwargs=True
+                )
+                post_handle = model.post_conv.register_forward_hook(
+                    observe_post_conv, with_kwargs=True
+                )
+                try:
+                    model(graph)
+                finally:
+                    pre_handle.remove()
+                    post_handle.remove()
+
+                self.assertIs(seen["pre"], edge_weight)
+                self.assertIs(recording_pool.seen_edge_weight, edge_weight)
+                self.assertIs(seen["post"], edge_weight)
+
     def test_conv_capabilities_match_convolution_apis(self):
         for name in CONV_PROFILES:
             profile = CONV_PROFILES[name]
@@ -215,7 +334,7 @@ class ComparabilityTests(unittest.TestCase):
                 "edge_weight" in inspect.signature(conv.forward).parameters
             )
             self.assertEqual(
-                profile.supports(ConnectivityType.SCALAR),
+                profile.can_consume(ConnectivityType.SCALAR),
                 api_accepts_edge_weight,
             )
 

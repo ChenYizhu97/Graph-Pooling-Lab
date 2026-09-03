@@ -20,7 +20,7 @@ class ConvProfile:
     def build(self, in_channels: int, out_channels: int) -> nn.Module:
         return self.factory(in_channels, out_channels)
 
-    def supports(self, connectivity_type: ConnectivityType) -> bool:
+    def can_consume(self, connectivity_type: ConnectivityType) -> bool:
         return connectivity_type in self.connectivity_types
 
 

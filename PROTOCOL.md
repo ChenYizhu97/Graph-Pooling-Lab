@@ -44,6 +44,11 @@ Model rules:
 - `variant=sum` adds pre-pooling and post-pooling graph embeddings.
 - `variant=plain` uses only the post-pooling graph embedding.
 - `pre_conv` and `post_conv` are separate, explicit encoder roles.
+- Convolution profiles describe which connectivity values a layer can consume.
+  A pre-pooling convolution may use only binary topology when it cannot consume
+  scalar edge values; those values are still forwarded unchanged to pooling.
+- A post-pooling convolution must consume the connectivity type produced by the
+  pooling method. Incompatible pooled output is rejected.
 
 ## Pool Protocol
 
@@ -75,6 +80,9 @@ Custom pooling profiles use:
 The referenced object must be a `PoolingProfile` containing at least one
 declared `PoolingSignature` and a builder. The builder must return a pooling
 module that implements `reset_parameters()`.
+
+Pooling signatures alone define each method's valid input/output connectivity
+domains; convolution capabilities do not alter those signatures.
 
 Dense assignment pooling methods (`mincutpool`, `diffpool`, `densepool`) follow
 one rule: input masks suppress padded input nodes before pooling, output nodes

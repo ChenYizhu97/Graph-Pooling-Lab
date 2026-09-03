@@ -46,10 +46,13 @@ def _check_comparability(
     pre_conv: str,
     post_conv: str,
 ) -> tuple[ComparabilityResult | None, str | None]:
-    if not CONV_PROFILES[pre_conv].supports(dataset_type):
+    pre_conv_profile = CONV_PROFILES[pre_conv]
+    # Scalar values may bypass the pre-conv, but every pre-conv must be able to
+    # process binary topology before the unchanged values reach pooling.
+    if not pre_conv_profile.can_consume(ConnectivityType.BINARY):
         return None, (
             f"Pre-pooling encoder '{pre_conv}' cannot consume "
-            f"{dataset_type.value} connectivity."
+            "binary graph topology."
         )
 
     profile = load_pooling_profile(pool_name)
@@ -59,7 +62,7 @@ def _check_comparability(
             f"Pooling profile '{pool_name}' is not declared valid for "
             f"{dataset_type.value}-valued input connectivity."
         )
-    if not CONV_PROFILES[post_conv].supports(output_type):
+    if not CONV_PROFILES[post_conv].can_consume(output_type):
         return None, (
             f"{pool_name} produces {output_type.value}-valued pooled connectivity, "
             f"but post-pooling encoder '{post_conv}' cannot consume scalar edge values."

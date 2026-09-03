@@ -55,7 +55,7 @@ class GraphClassifier(torch.nn.Module):
             self.hidden_features,
             self.hidden_features,
         )
-        self.pre_conv_supports_edge_weight = pre_conv_profile.supports(
+        self.pre_conv_can_consume_edge_weight = pre_conv_profile.can_consume(
             ConnectivityType.SCALAR
         )
         self.pre_norm = norm_layer(self.hidden_features)
@@ -63,7 +63,7 @@ class GraphClassifier(torch.nn.Module):
             self.hidden_features,
             self.hidden_features,
         )
-        self.post_conv_supports_edge_weight = post_conv_profile.supports(
+        self.post_conv_can_consume_edge_weight = post_conv_profile.can_consume(
             ConnectivityType.SCALAR
         )
         self.post_norm = norm_layer(self.hidden_features)
@@ -91,15 +91,10 @@ class GraphClassifier(torch.nn.Module):
         edge_weight: Optional[Tensor],
     ) -> tuple[Tensor, Optional[Tensor]]:
         x = self.pre_gnn(x)
-        if edge_weight is None:
-            x = self.pre_conv(x, edge_index)
-        elif self.pre_conv_supports_edge_weight:
+        if edge_weight is not None and self.pre_conv_can_consume_edge_weight:
             x = self.pre_conv(x, edge_index, edge_weight=edge_weight)
         else:
-            raise ValueError(
-                "Scalar connectivity reached a pre-pooling convolution "
-                "that cannot consume edge_weight."
-            )
+            x = self.pre_conv(x, edge_index)
         x = self.nonlinearity(self.pre_norm(x))
 
         before_pool = readout(x=x, batch=batch) if self.variant == "sum" else None
@@ -107,7 +102,7 @@ class GraphClassifier(torch.nn.Module):
 
         if pool_output.edge_weight is None:
             x = self.post_conv(pool_output.x, pool_output.edge_index)
-        elif self.post_conv_supports_edge_weight:
+        elif self.post_conv_can_consume_edge_weight:
             x = self.post_conv(
                 pool_output.x,
                 pool_output.edge_index,
