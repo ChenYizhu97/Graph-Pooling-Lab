@@ -189,8 +189,17 @@ One JSONL line is one canonical `ExperimentRecord` containing:
 - execution-only settings;
 - the resolved seeds and concrete split indices in `run_plan`;
 - runtime metadata;
-- per-run and aggregate results;
+- per-run and aggregate results, including compact training and pooled-graph
+  measurements;
 - a content-derived `record_id`.
+
+Each run selects its checkpoint using validation classification loss, restores
+that checkpoint, and evaluates the test split once. The record includes training
+wall time, epochs trained, CUDA peak allocated memory when applicable, parameter
+counts, and aggregate test-set input/output graph sizes. These measurements are
+collected by the experiment runner and do not extend `PoolingOutput`.
+Edge statistics retain both stored connectivity entries and strictly nonzero
+entries, so dense zero-weight slots can be distinguished during analysis.
 
 Query records or build a grouped benchmark report:
 

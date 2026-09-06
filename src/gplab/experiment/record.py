@@ -12,7 +12,7 @@ from gplab.experiment.identity import attach_record_id, require_record_id
 ExperimentRecord = dict[str, Any]
 
 
-def build_result(run_records: list[dict]) -> dict:
+def build_result(run_records: list[dict], *, trainable_parameters: dict) -> dict:
     if not run_records:
         raise ValueError("Cannot build result from an empty run record list.")
 
@@ -24,12 +24,35 @@ def build_result(run_records: list[dict]) -> dict:
             "best_val_loss": float(run["best_val_loss"]),
             "best_val_auxiliary_loss": float(run["best_val_auxiliary_loss"]),
             "best_test_acc": float(run["best_test_acc"]),
+            "training_wall_time_seconds": float(run["training_wall_time_seconds"]),
+            "epochs_trained": int(run["epochs_trained"]),
+            "peak_cuda_allocated_bytes": (
+                None
+                if run["peak_cuda_allocated_bytes"] is None
+                else int(run["peak_cuda_allocated_bytes"])
+            ),
+            "structural_stats": {
+                "total_input_nodes": int(run["structural_stats"]["total_input_nodes"]),
+                "total_output_nodes": int(run["structural_stats"]["total_output_nodes"]),
+                "total_input_edges": int(run["structural_stats"]["total_input_edges"]),
+                "total_output_edges": int(run["structural_stats"]["total_output_edges"]),
+                "total_input_nonzero_edges": int(run["structural_stats"]["total_input_nonzero_edges"]),
+                "total_output_nonzero_edges": int(run["structural_stats"]["total_output_nonzero_edges"]),
+                "num_graphs": int(run["structural_stats"]["num_graphs"]),
+                "mean_node_retention": float(
+                    run["structural_stats"]["mean_node_retention"]
+                ),
+            },
         }
         for run in run_records
     ]
     return {
         "mean": float(np.mean(test_acc)),
         "std": float(np.std(test_acc)),
+        "trainable_parameters": {
+            "total": int(trainable_parameters["total"]),
+            "pooling_module": int(trainable_parameters["pooling_module"]),
+        },
         "runs": compact_runs,
     }
 
@@ -41,13 +64,17 @@ def build_record(
     run_plan: RunPlan,
     runtime: dict,
     run_records: list[dict],
+    trainable_parameters: dict,
 ) -> ExperimentRecord:
     record = {
         "case": case.to_mapping(),
         "execution": execution.to_mapping(),
         "run_plan": run_plan.to_mapping(),
         "runtime": runtime,
-        "result": build_result(run_records),
+        "result": build_result(
+            run_records,
+            trainable_parameters=trainable_parameters,
+        ),
     }
     return attach_record_id(record)
 

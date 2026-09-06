@@ -207,13 +207,30 @@ Records are append-only JSONL entries produced by executed requests.
   "result": {
     "mean": 0.5,
     "std": 0.0,
+    "trainable_parameters": {
+      "total": 1000,
+      "pooling_module": 17
+    },
     "runs": [
       {
         "seed": 457750178,
         "best_epoch": 1,
         "best_val_loss": 1.0,
         "best_val_auxiliary_loss": 0.0,
-        "best_test_acc": 0.5
+        "best_test_acc": 0.5,
+        "training_wall_time_seconds": 0.25,
+        "epochs_trained": 1,
+        "peak_cuda_allocated_bytes": null,
+        "structural_stats": {
+          "total_input_nodes": 10,
+          "total_output_nodes": 6,
+          "total_input_edges": 20,
+          "total_output_edges": 8,
+          "total_input_nonzero_edges": 20,
+          "total_output_nonzero_edges": 6,
+          "num_graphs": 2,
+          "mean_node_retention": 0.6
+        }
       }
     ]
   }
@@ -223,6 +240,23 @@ Records are append-only JSONL entries produced by executed requests.
 `run_plan` contains `case_id`, resolved `seeds`, and concrete `train` / `val` /
 `test` split indices. `result.mean` and `result.std` are computed from
 `result.runs[*].best_test_acc`.
+
+`result.trainable_parameters` is counted after all runs, when lazy parameters
+have been initialized by training, and is invariant across runs. Run-level wall time and
+epoch count cover the training loop, including validation passes but excluding
+the one final test pass. `peak_cuda_allocated_bytes` is `null` on CPU; on CUDA it
+covers allocations from the start of training through final evaluation.
+`structural_stats` contains only aggregates from that final test pass. Node
+retention is averaged per graph rather than computed as a ratio of the two node
+totals, and no per-graph observations are written to the record.
+
+`total_input_edges` and `total_output_edges` count stored connectivity entries,
+including zero weights. The corresponding `total_input_nonzero_edges` and
+`total_output_nonzero_edges` count strictly nonzero weights; without edge
+weights, every stored entry counts. Directions, self-loops, and duplicates are
+counted as stored, and no small-weight threshold is applied. For example,
+`total_output_nonzero_edges / total_output_edges` gives the aggregate nonzero
+fraction when the denominator is positive; leave it undefined for zero edges.
 
 One record log line is one `ExperimentRecord`. `gplab-query` and `gplab-replay`
 both consume this JSONL format; malformed records return structured config

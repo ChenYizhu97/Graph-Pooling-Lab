@@ -28,6 +28,34 @@ belong to `ExecutionOptions`, not to the benchmark case.
 - Each run builds a seeded train/validation/test split.
 - `split.test` is derived as `1 - split.train - split.val`.
 
+## Evaluation Protocol
+
+- Training evaluates the validation split after each epoch.
+- Validation classification loss alone selects the best checkpoint; validation
+  auxiliary loss is recorded but is not part of the selection criterion.
+- After training or early stopping, the selected checkpoint is restored and the
+  test split is evaluated exactly once.
+- Training wall time includes the epoch loop and its validation passes, but not
+  the final test evaluation.
+- When CUDA is used, peak allocated memory is reset immediately before the epoch
+  loop and read after the final test evaluation.
+- Trainable parameter counts are recorded for the whole model and separately
+  for the pooling module, after all runs finish so normal training has
+  initialized any lazy parameters.
+- The final test pass records aggregate input/output node and edge totals and
+  graph count. Mean node retention is the unweighted mean of
+  `output_nodes / input_nodes` over test graphs; no per-graph values are stored.
+  For fixed-cluster dense methods this is an effective output-size ratio and may
+  exceed one, not a claim that input nodes were literally selected.
+- `total_input_edges` and `total_output_edges` count stored `edge_index`
+  entries, including zero-weight entries in dense pooled graphs.
+  `total_input_nonzero_edges` and `total_output_nonzero_edges` count entries
+  whose `edge_weight != 0`; without edge weights, all stored entries count.
+  Both counts retain directions, self-loops, and duplicates as stored, with no
+  threshold for small weights. The nonzero fraction can be computed as
+  `total_output_nonzero_edges / total_output_edges` when the denominator is
+  positive; an empty edge set has an undefined fraction.
+
 ## Model Protocol
 
 All benchmark cases use one shared backbone shape:
@@ -66,6 +94,10 @@ Optional fields:
 - `perm`
 - `score`
 - `aux_loss`
+
+Benchmark measurements are collected by the experiment runner and are not part
+of `PoolingOutput`. Pooling modules remain responsible only for producing the
+pooled graph.
 
 `edge_weight` is the only scalar-connectivity channel in the GPLab pool
 contract. Adapter-local names such as PyG's `edge_attr` must be converted at

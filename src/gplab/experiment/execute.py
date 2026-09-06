@@ -1,4 +1,7 @@
+import copy
+from contextlib import contextmanager
 from dataclasses import dataclass
+import time
 
 import numpy as np
 import torch
@@ -31,6 +34,141 @@ class PreparedRun:
     run_plan: RunPlan
     runtime: dict
     device: torch.device
+
+
+@dataclass
+class _StructuralStatistics:
+    total_input_nodes: int = 0
+    total_output_nodes: int = 0
+    total_input_edges: int = 0
+    total_output_edges: int = 0
+    total_input_nonzero_edges: int = 0
+    total_output_nonzero_edges: int = 0
+    num_graphs: int = 0
+    _node_retention_sum: float = 0.0
+
+    def observe(
+        self,
+        *,
+        input_x: torch.Tensor,
+        input_edge_index: torch.Tensor,
+        input_batch: torch.Tensor,
+        output_x: torch.Tensor,
+        output_edge_index: torch.Tensor,
+        output_batch: torch.Tensor,
+        input_edge_weight: torch.Tensor | None = None,
+        output_edge_weight: torch.Tensor | None = None,
+    ) -> None:
+        if input_x.size(0) == 0:
+            raise ValueError("Cannot measure pooling structure for an empty graph batch.")
+
+        graph_count = int(input_batch.max().item()) + 1
+        input_nodes_per_graph = torch.bincount(input_batch, minlength=graph_count)
+        output_nodes_per_graph = torch.bincount(output_batch, minlength=graph_count)
+        if output_nodes_per_graph.numel() != graph_count:
+            raise ValueError("Pooled batch contains a graph index absent from the input batch.")
+        if torch.any(input_nodes_per_graph == 0):
+            raise ValueError("Input batch graph indices must be contiguous.")
+
+        self.total_input_nodes += int(input_x.size(0))
+        self.total_output_nodes += int(output_x.size(0))
+        self.total_input_edges += int(input_edge_index.size(1))
+        self.total_output_edges += int(output_edge_index.size(1))
+        self.total_input_nonzero_edges += _count_nonzero_edges(input_edge_index, input_edge_weight)
+        self.total_output_nonzero_edges += _count_nonzero_edges(output_edge_index, output_edge_weight)
+        self.num_graphs += graph_count
+        self._node_retention_sum += float(
+            (
+                output_nodes_per_graph.to(torch.float64)
+                / input_nodes_per_graph.to(torch.float64)
+            ).sum().item()
+        )
+
+    def to_mapping(self) -> dict:
+        if self.num_graphs == 0:
+            raise ValueError("Structural statistics observed no graphs.")
+        return {
+            "total_input_nodes": self.total_input_nodes,
+            "total_output_nodes": self.total_output_nodes,
+            "total_input_edges": self.total_input_edges,
+            "total_output_edges": self.total_output_edges,
+            "total_input_nonzero_edges": self.total_input_nonzero_edges,
+            "total_output_nonzero_edges": self.total_output_nonzero_edges,
+            "num_graphs": self.num_graphs,
+            "mean_node_retention": self._node_retention_sum / self.num_graphs,
+        }
+
+
+def _count_nonzero_edges(edge_index: torch.Tensor, edge_weight: torch.Tensor | None) -> int:
+    if edge_weight is None:
+        return int(edge_index.size(1))
+    return int(torch.count_nonzero(edge_weight).item())
+
+
+def _argument(args: tuple, kwargs: dict, name: str, position: int, default=None):
+    if name in kwargs:
+        return kwargs[name]
+    return args[position] if position < len(args) else default
+
+
+@contextmanager
+def _capture_structural_statistics(model):
+    statistics = _StructuralStatistics()
+    pool_module = getattr(model, "pool_module", None)
+
+    if pool_module is None:
+        def observe_identity(_module, args, kwargs):
+            data = _argument(args, kwargs, "data", 0)
+            batch = getattr(data, "batch", None)
+            if batch is None:
+                batch = data.edge_index.new_zeros(data.x.size(0))
+            statistics.observe(
+                input_x=data.x,
+                input_edge_index=data.edge_index,
+                input_batch=batch,
+                output_x=data.x,
+                output_edge_index=data.edge_index,
+                output_batch=batch,
+                input_edge_weight=getattr(data, "edge_weight", None),
+                output_edge_weight=getattr(data, "edge_weight", None),
+            )
+
+        handle = model.register_forward_pre_hook(observe_identity, with_kwargs=True)
+    else:
+        def observe_pool(_module, args, kwargs, output):
+            statistics.observe(
+                input_x=_argument(args, kwargs, "x", 0),
+                input_edge_index=_argument(args, kwargs, "edge_index", 1),
+                input_batch=_argument(args, kwargs, "batch", 2),
+                output_x=output.x,
+                output_edge_index=output.edge_index,
+                output_batch=output.batch,
+                input_edge_weight=_argument(args, kwargs, "edge_weight", 3),
+                output_edge_weight=output.edge_weight,
+            )
+
+        handle = pool_module.register_forward_hook(observe_pool, with_kwargs=True)
+
+    try:
+        yield statistics
+    finally:
+        handle.remove()
+
+
+def _count_trainable_parameters(model) -> dict:
+    pool_module = getattr(model, "pool_module", None)
+    return {
+        "total": sum(
+            parameter.numel()
+            for parameter in model.parameters()
+            if parameter.requires_grad
+        ),
+        "pooling_module": 0 if pool_module is None else sum(
+            parameter.numel()
+            for parameter in pool_module.parameters()
+            if parameter.requires_grad
+        ),
+    }
 
 
 def _summarize_dataset(dataset) -> dict:
@@ -112,20 +250,26 @@ def _execute_single_run(
 
     best_val_loss = np.inf
     best_val_auxiliary_loss = 0.0
-    best_test_acc = 0.0
+    best_checkpoint = None
     best_epoch = 0
     stale_epochs = 0
+    epochs_trained = 0
+
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+        torch.cuda.reset_peak_memory_stats(device)
+    training_started = time.perf_counter()
 
     loop = tqdm(range(1, train.epochs + 1), disable=not show_progress)
     for epoch in loop:
+        epochs_trained = epoch
         train_epoch(model, train_loader, optimizer, loss_fn, device)
         validation = evaluate_epoch(model, val_loader, loss_fn, device)
 
         if validation.classification_loss < best_val_loss:
-            test = evaluate_epoch(model, test_loader, loss_fn, device)
             best_val_loss = validation.classification_loss
             best_val_auxiliary_loss = validation.auxiliary_loss
-            best_test_acc = test.accuracy
+            best_checkpoint = copy.deepcopy(model.state_dict())
             best_epoch = epoch
             stale_epochs = 0
         else:
@@ -134,11 +278,26 @@ def _execute_single_run(
         loop.set_description(f"Run [{run_idx}/{train.runs}]-Epoch [{epoch}/{train.epochs}]")
         loop.set_postfix(
             best_epoch=best_epoch,
-            best_test_acc=best_test_acc,
             best_val_loss=best_val_loss,
         )
         if stale_epochs > train.patience:
             break
+
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+    training_wall_time_seconds = time.perf_counter() - training_started
+
+    if best_checkpoint is None:
+        raise RuntimeError("Training did not produce a validation checkpoint.")
+    model.load_state_dict(best_checkpoint)
+    with _capture_structural_statistics(model) as structural_statistics:
+        test = evaluate_epoch(model, test_loader, loss_fn, device)
+
+    peak_cuda_allocated_bytes = (
+        int(torch.cuda.max_memory_allocated(device))
+        if device.type == "cuda"
+        else None
+    )
 
     return {
         "run": run_idx,
@@ -151,7 +310,11 @@ def _execute_single_run(
         "best_epoch": best_epoch,
         "best_val_loss": best_val_loss,
         "best_val_auxiliary_loss": best_val_auxiliary_loss,
-        "best_test_acc": best_test_acc,
+        "best_test_acc": test.accuracy,
+        "training_wall_time_seconds": training_wall_time_seconds,
+        "epochs_trained": epochs_trained,
+        "peak_cuda_allocated_bytes": peak_cuda_allocated_bytes,
+        "structural_stats": structural_statistics.to_mapping(),
     }
 
 
@@ -189,12 +352,15 @@ def run_experiment(request: BenchmarkRequest, *, emit_text: bool = True) -> dict
         if emit_text and run_idx != request.case.training.runs:
             rprint(console_separator("-"))
 
+    # Normal training has now materialized any lazy parameters in custom pools.
+    trainable_parameters = _count_trainable_parameters(model)
     record = build_record(
         request.case,
         execution=request.execution,
         run_plan=prepared.run_plan,
         runtime=prepared.runtime,
         run_records=run_records,
+        trainable_parameters=trainable_parameters,
     )
     del model
     if device.type == "cuda":
