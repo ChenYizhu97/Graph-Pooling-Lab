@@ -194,10 +194,14 @@ One JSONL line is one canonical `ExperimentRecord` containing:
 - a content-derived `record_id`.
 
 Each run selects its checkpoint using validation classification loss, restores
-that checkpoint, and evaluates the test split once. The record includes training
-wall time, epochs trained, CUDA peak allocated memory when applicable, parameter
+that checkpoint, and evaluates the test split once, recording `test_acc`.
+The record includes training wall time, epochs trained, peak training CUDA
+allocated memory (`peak_training_cuda_allocated_bytes`) when applicable, parameter
 counts, and aggregate test-set input/output graph sizes. These measurements are
 collected by the experiment runner and do not extend `PoolingOutput`.
+The CUDA peak includes the training loop, validation, and checkpoint saving; it
+is read after synchronization and before checkpoint restoration, final testing,
+and structural-statistics collection.
 Edge statistics retain both stored connectivity entries and strictly nonzero
 entries, so dense zero-weight slots can be distinguished during analysis.
 

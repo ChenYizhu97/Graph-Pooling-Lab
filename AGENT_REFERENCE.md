@@ -217,10 +217,10 @@ Records are append-only JSONL entries produced by executed requests.
         "best_epoch": 1,
         "best_val_loss": 1.0,
         "best_val_auxiliary_loss": 0.0,
-        "best_test_acc": 0.5,
+        "test_acc": 0.5,
         "training_wall_time_seconds": 0.25,
         "epochs_trained": 1,
-        "peak_cuda_allocated_bytes": null,
+        "peak_training_cuda_allocated_bytes": null,
         "structural_stats": {
           "total_input_nodes": 10,
           "total_output_nodes": 6,
@@ -239,13 +239,17 @@ Records are append-only JSONL entries produced by executed requests.
 
 `run_plan` contains `case_id`, resolved `seeds`, and concrete `train` / `val` /
 `test` split indices. `result.mean` and `result.std` are computed from
-`result.runs[*].best_test_acc`.
+`result.runs[*].test_acc`, the accuracy from the single final test evaluation of
+each run's best validation checkpoint.
 
 `result.trainable_parameters` is counted after all runs, when lazy parameters
-have been initialized by training, and is invariant across runs. Run-level wall time and
-epoch count cover the training loop, including validation passes but excluding
-the one final test pass. `peak_cuda_allocated_bytes` is `null` on CPU; on CUDA it
-covers allocations from the start of training through final evaluation.
+have been initialized by training, and is invariant across runs. Run-level wall
+time and epoch count cover the training loop, including validation passes but
+excluding the one final test pass. `peak_training_cuda_allocated_bytes` is
+`null` on CPU; on CUDA it records the peak allocated memory during the epoch
+loop, including validation and checkpoint saving. The peak is read after
+training finishes and CUDA is synchronized, before checkpoint restoration,
+final test evaluation, or structural-statistics instrumentation.
 `structural_stats` contains only aggregates from that final test pass. Node
 retention is averaged per graph rather than computed as a ratio of the two node
 totals, and no per-graph observations are written to the record.
@@ -258,6 +262,11 @@ counted as stored, and no small-weight threshold is applied. For example,
 `total_output_nonzero_edges / total_output_edges` gives the aggregate nonzero
 fraction when the denominator is positive; leave it undefined for zero edges.
 
+Query and replay can still read historical runs named `best_test_acc`, while
+newly executed runs write only `test_acc`. Historical `peak_cuda_allocated_bytes`
+covered final evaluation as well and must not be interpreted as the new
+training-only peak. Historical records and their IDs are not rewritten.
+
 One record log line is one `ExperimentRecord`. `gplab-query` and `gplab-replay`
 both consume this JSONL format; malformed records return structured config
 errors instead of being treated as partial records.
@@ -268,6 +277,9 @@ concrete split indices. A replay result reports both the source record case id
 and the replay job case id.
 
 ### SUMMARY_FIELDS
+
+`max_test_acc` and `min_test_acc` are the maximum and minimum of the per-run
+`test_acc` values across runs.
 
 Query summaries include:
 
@@ -286,8 +298,8 @@ Query summaries include:
 - `avg_best_epoch`
 - `avg_val_loss`
 - `avg_val_auxiliary_loss`
-- `best_test_acc`
-- `worst_test_acc`
+- `max_test_acc`
+- `min_test_acc`
 - `val_loss_test_acc_corr`
 - optional `tag`
 - optional `case`

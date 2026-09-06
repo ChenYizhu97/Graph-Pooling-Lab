@@ -283,8 +283,10 @@ def _execute_single_run(
         if stale_epochs > train.patience:
             break
 
+    peak_training_cuda_allocated_bytes = None
     if device.type == "cuda":
         torch.cuda.synchronize(device)
+        peak_training_cuda_allocated_bytes = int(torch.cuda.max_memory_allocated(device))
     training_wall_time_seconds = time.perf_counter() - training_started
 
     if best_checkpoint is None:
@@ -292,12 +294,6 @@ def _execute_single_run(
     model.load_state_dict(best_checkpoint)
     with _capture_structural_statistics(model) as structural_statistics:
         test = evaluate_epoch(model, test_loader, loss_fn, device)
-
-    peak_cuda_allocated_bytes = (
-        int(torch.cuda.max_memory_allocated(device))
-        if device.type == "cuda"
-        else None
-    )
 
     return {
         "run": run_idx,
@@ -310,10 +306,10 @@ def _execute_single_run(
         "best_epoch": best_epoch,
         "best_val_loss": best_val_loss,
         "best_val_auxiliary_loss": best_val_auxiliary_loss,
-        "best_test_acc": test.accuracy,
+        "test_acc": test.accuracy,
         "training_wall_time_seconds": training_wall_time_seconds,
         "epochs_trained": epochs_trained,
-        "peak_cuda_allocated_bytes": peak_cuda_allocated_bytes,
+        "peak_training_cuda_allocated_bytes": peak_training_cuda_allocated_bytes,
         "structural_stats": structural_statistics.to_mapping(),
     }
 

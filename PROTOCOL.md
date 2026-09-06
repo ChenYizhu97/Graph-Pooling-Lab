@@ -34,11 +34,15 @@ belong to `ExecutionOptions`, not to the benchmark case.
 - Validation classification loss alone selects the best checkpoint; validation
   auxiliary loss is recorded but is not part of the selection criterion.
 - After training or early stopping, the selected checkpoint is restored and the
-  test split is evaluated exactly once.
+  test split is evaluated exactly once. Its accuracy is recorded as `test_acc`.
 - Training wall time includes the epoch loop and its validation passes, but not
   the final test evaluation.
-- When CUDA is used, peak allocated memory is reset immediately before the epoch
-  loop and read after the final test evaluation.
+- `peak_training_cuda_allocated_bytes` measures peak training CUDA allocated
+  memory. The peak is reset immediately before the epoch loop and read
+  immediately after that loop finishes and CUDA is synchronized, before
+  checkpoint restoration or final testing. It includes training, per-epoch
+  validation, and checkpoint saving, but excludes final test evaluation and
+  structural-statistics instrumentation. It is `null` on CPU.
 - Trainable parameter counts are recorded for the whole model and separately
   for the pooling module, after all runs finish so normal training has
   initialized any lazy parameters.

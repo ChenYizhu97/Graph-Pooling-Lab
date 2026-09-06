@@ -1,3 +1,4 @@
+import copy
 from dataclasses import replace
 import unittest
 from unittest.mock import patch
@@ -7,7 +8,7 @@ from torch_geometric.data import Data, InMemoryDataset
 
 from gplab.benchmark.case import BenchmarkCase
 from gplab.benchmark.execution import ExecutionOptions
-from gplab.benchmark.plan import SplitIndices
+from gplab.benchmark.plan import RunPlan, SplitIndices
 from gplab.benchmark.request import BenchmarkRequest
 from gplab.experiment.execute import (
     _capture_structural_statistics,
@@ -15,7 +16,9 @@ from gplab.experiment.execute import (
     _execute_single_run,
     run_experiment,
 )
-from gplab.experiment.record import build_result
+from gplab.experiment.identity import attach_record_id
+from gplab.experiment.query import QuerySpec, build_benchmark_report, build_query_result
+from gplab.experiment.record import build_record, build_result
 from gplab.graph import ConnectivityType
 from gplab.layers.pool.profiles import POOLING_PROFILES, PoolingProfile, PoolingSignature
 from gplab.layers.pool.pooling_output import PoolingOutput
@@ -219,9 +222,11 @@ class ExperimentEvaluationTests(unittest.TestCase):
         self.assertEqual(evaluated_loaders, ["val", "val", "val", "test"])
         self.assertEqual(run["best_epoch"], 2)
         self.assertEqual(run["epochs_trained"], 3)
-        self.assertEqual(run["best_test_acc"], 0.75)
+        self.assertEqual(run["test_acc"], 0.75)
+        self.assertNotIn("best_test_acc", run)
         self.assertEqual(run["training_wall_time_seconds"], 2.5)
-        self.assertIsNone(run["peak_cuda_allocated_bytes"])
+        self.assertIsNone(run["peak_training_cuda_allocated_bytes"])
+        self.assertNotIn("peak_cuda_allocated_bytes", run)
 
     def test_structural_statistics_are_aggregate_per_graph_ratios(self):
         model = _PooledModel()
@@ -342,10 +347,10 @@ class ExperimentEvaluationTests(unittest.TestCase):
             "best_epoch": 2,
             "best_val_loss": 0.5,
             "best_val_auxiliary_loss": 0.0,
-            "best_test_acc": 0.75,
+            "test_acc": 0.75,
             "training_wall_time_seconds": 1.25,
             "epochs_trained": 3,
-            "peak_cuda_allocated_bytes": None,
+            "peak_training_cuda_allocated_bytes": None,
             "structural_stats": {
                 "total_input_nodes": 5,
                 "total_output_nodes": 3,
@@ -357,16 +362,59 @@ class ExperimentEvaluationTests(unittest.TestCase):
                 "mean_node_retention": (2 / 3 + 1 / 2) / 2,
             },
         }
-        result = build_result([run], trainable_parameters=counts)
+        second_run = {**run, "seed": 8, "test_acc": 0.25}
+        result = build_result([run, second_run], trainable_parameters=counts)
 
         self.assertEqual(result["trainable_parameters"], counts)
         self.assertEqual(result["runs"][0]["structural_stats"], run["structural_stats"])
+        self.assertEqual(result["mean"], 0.5)
+        self.assertEqual(result["std"], 0.25)
+        self.assertEqual([entry["test_acc"] for entry in result["runs"]], [0.75, 0.25])
+        for entry in result["runs"]:
+            self.assertNotIn("best_test_acc", entry)
+            self.assertNotIn("peak_cuda_allocated_bytes", entry)
         self.assertFalse(any(
             isinstance(value, list)
             for value in result["runs"][0]["structural_stats"].values()
         ))
 
-    def test_cuda_peak_memory_is_reset_and_recorded(self):
+        case = _case()
+        case = replace(
+            case,
+            training=replace(case.training, runs=2, seeds=replace(case.training.seeds, values=(7, 8))),
+        )
+        record = build_record(
+            case,
+            execution=ExecutionOptions(),
+            run_plan=RunPlan.build(case, dataset_size=8),
+            runtime={},
+            run_records=[run, second_run],
+            trainable_parameters=counts,
+        )
+        for historical in (False, True):
+            with self.subTest(historical=historical):
+                source = copy.deepcopy(record)
+                if historical:
+                    for entry in source["result"]["runs"]:
+                        entry["best_test_acc"] = entry.pop("test_acc")
+                        entry["peak_cuda_allocated_bytes"] = entry.pop("peak_training_cuda_allocated_bytes")
+                    attach_record_id(source)
+                original = copy.deepcopy(source)
+                spec = QuerySpec(log_file="unused.jsonl")
+                query = build_query_result([source], spec)
+                report = build_benchmark_report([source], spec)
+                for summary in (query["summaries"][0], report["groups"][0]["summaries"][0]):
+                    self.assertEqual(summary["mean"], 0.5)
+                    self.assertEqual(summary["std"], 0.25)
+                    self.assertEqual(summary["max_test_acc"], 0.75)
+                    self.assertEqual(summary["min_test_acc"], 0.25)
+                    self.assertNotIn("best_test_acc", summary)
+                    self.assertNotIn("worst_test_acc", summary)
+                replay = BenchmarkRequest.from_record_for_replay(source)
+                self.assertEqual(replay.case.training.seeds.values, (7, 8))
+                self.assertEqual(source, original)
+
+    def test_cuda_peak_memory_excludes_checkpoint_restoration_and_test(self):
         model = _SelectionModel()
         test_batch = Data(
             x=torch.ones(2, 2),
@@ -374,15 +422,48 @@ class ExperimentEvaluationTests(unittest.TestCase):
             batch=torch.zeros(2, dtype=torch.long),
             y=torch.tensor([0]),
         )
+        events = []
+        memory_peak = 0
+
+        def reset_memory_peak(_device):
+            nonlocal memory_peak
+            events.append("reset_peak")
+            memory_peak = 0
+
+        def read_memory_peak(_device):
+            events.append("read_peak")
+            return memory_peak
 
         def train_one_epoch(current_model, *_args):
+            nonlocal memory_peak
+            events.append("train")
+            memory_peak = max(memory_peak, 4096)
             with torch.no_grad():
                 current_model.weight.add_(1)
 
         def evaluate(current_model, loader, *_args):
+            nonlocal memory_peak
+            events.append(loader)
             if loader == "test":
+                memory_peak = max(memory_peak, 65536)
                 current_model(test_batch)
+            else:
+                memory_peak = max(memory_peak, 8192)
             return EvaluationResult(0.5, 1.0, 0.0)
+
+        load_state_dict = model.load_state_dict
+
+        def restore_checkpoint(state):
+            nonlocal memory_peak
+            events.append("restore")
+            memory_peak = max(memory_peak, 16384)
+            return load_state_dict(state)
+
+        def capture_statistics(current_model):
+            nonlocal memory_peak
+            events.append("statistics")
+            memory_peak = max(memory_peak, 32768)
+            return _capture_structural_statistics(current_model)
 
         with (
             patch(
@@ -395,11 +476,19 @@ class ExperimentEvaluationTests(unittest.TestCase):
             ),
             patch("gplab.experiment.execute.train_epoch", side_effect=train_one_epoch),
             patch("gplab.experiment.execute.evaluate_epoch", side_effect=evaluate),
-            patch("gplab.experiment.execute.torch.cuda.synchronize") as synchronize,
-            patch("gplab.experiment.execute.torch.cuda.reset_peak_memory_stats") as reset_peak,
+            patch.object(model, "load_state_dict", side_effect=restore_checkpoint),
+            patch("gplab.experiment.execute._capture_structural_statistics", side_effect=capture_statistics),
+            patch(
+                "gplab.experiment.execute.torch.cuda.synchronize",
+                side_effect=lambda _device: events.append("synchronize"),
+            ) as synchronize,
+            patch(
+                "gplab.experiment.execute.torch.cuda.reset_peak_memory_stats",
+                side_effect=reset_memory_peak,
+            ) as reset_peak,
             patch(
                 "gplab.experiment.execute.torch.cuda.max_memory_allocated",
-                return_value=4096,
+                side_effect=read_memory_peak,
             ) as max_allocated,
         ):
             run = _execute_single_run(
@@ -413,7 +502,12 @@ class ExperimentEvaluationTests(unittest.TestCase):
                 show_progress=False,
             )
 
-        self.assertEqual(run["peak_cuda_allocated_bytes"], 4096)
+        self.assertEqual(run["peak_training_cuda_allocated_bytes"], 8192)
+        self.assertEqual(memory_peak, 65536)
+        self.assertEqual(events, [
+            "synchronize", "reset_peak", "train", "val", "synchronize",
+            "read_peak", "restore", "statistics", "test",
+        ])
         self.assertEqual(synchronize.call_count, 2)
         reset_peak.assert_called_once_with(torch.device("cuda:0"))
         max_allocated.assert_called_once_with(torch.device("cuda:0"))

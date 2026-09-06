@@ -16,20 +16,20 @@ def build_result(run_records: list[dict], *, trainable_parameters: dict) -> dict
     if not run_records:
         raise ValueError("Cannot build result from an empty run record list.")
 
-    test_acc = [float(run["best_test_acc"]) for run in run_records]
+    test_acc = [float(run["test_acc"]) for run in run_records]
     compact_runs = [
         {
             "seed": int(run["seed"]),
             "best_epoch": int(run["best_epoch"]),
             "best_val_loss": float(run["best_val_loss"]),
             "best_val_auxiliary_loss": float(run["best_val_auxiliary_loss"]),
-            "best_test_acc": float(run["best_test_acc"]),
+            "test_acc": float(run["test_acc"]),
             "training_wall_time_seconds": float(run["training_wall_time_seconds"]),
             "epochs_trained": int(run["epochs_trained"]),
-            "peak_cuda_allocated_bytes": (
+            "peak_training_cuda_allocated_bytes": (
                 None
-                if run["peak_cuda_allocated_bytes"] is None
-                else int(run["peak_cuda_allocated_bytes"])
+                if run["peak_training_cuda_allocated_bytes"] is None
+                else int(run["peak_training_cuda_allocated_bytes"])
             ),
             "structural_stats": {
                 "total_input_nodes": int(run["structural_stats"]["total_input_nodes"]),
@@ -82,7 +82,11 @@ def build_record(
 def summarize_record(record: ExperimentRecord) -> dict:
     ensured = require_record_id(record)
     runs = ensured["result"]["runs"]
-    test_acc = [float(run["best_test_acc"]) for run in runs]
+    # Read historical logs without rewriting their persisted fields or IDs.
+    test_acc = [
+        float(run["test_acc"] if "test_acc" in run else run["best_test_acc"])
+        for run in runs
+    ]
     val_loss = [float(run["best_val_loss"]) for run in runs]
     val_auxiliary_loss = [
         float(run.get("best_val_auxiliary_loss", 0.0))
@@ -110,8 +114,8 @@ def summarize_record(record: ExperimentRecord) -> dict:
         "avg_best_epoch": float(np.mean(epochs)),
         "avg_val_loss": float(np.mean(val_loss)),
         "avg_val_auxiliary_loss": float(np.mean(val_auxiliary_loss)),
-        "best_test_acc": float(max(test_acc)),
-        "worst_test_acc": float(min(test_acc)),
+        "max_test_acc": float(max(test_acc)),
+        "min_test_acc": float(min(test_acc)),
         "val_loss_test_acc_corr": corr,
     }
     if ensured["execution"].get("tag") is not None:
