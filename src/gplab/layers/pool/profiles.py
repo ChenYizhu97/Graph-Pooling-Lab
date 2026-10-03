@@ -9,15 +9,16 @@ from types import MappingProxyType
 from typing import Optional
 
 import torch
+from tgp.poolers import SAGPooling, TopkPooling
 from torch.nn import Linear
-from torch_geometric.nn import DenseGCNConv
+from torch_geometric.nn import DenseGCNConv, GCNConv
 
 from gplab.graph import ConnectivityType
 
 from .dense_pool_adapter import DensePoolAdapter
-from .pyg_adapters import ASAPoolAdapter, TopKPoolAdapter
-from .sag_pool import SAGPooling
+from .pyg_adapters import ASAPoolAdapter
 from .sparse_pool import SparsePooling
+from .tgp_connect import SelectionConnect
 
 PoolBuilder = Callable[
     [int, float, Optional[float], str | Callable],
@@ -104,16 +105,28 @@ def _topk_pool(
     _avg_node_num: Optional[float],
     nonlinearity: str | Callable,
 ) -> torch.nn.Module:
-    return TopKPoolAdapter(in_channels, ratio, nonlinearity)
+    pool = TopkPooling(in_channels, ratio=ratio, nonlinearity=nonlinearity,
+                       remove_self_loops=False)
+    if in_channels == 1:
+        # TGP treats one feature as a precomputed score by default. Standard
+        # TopK still needs its normalized learned projection at width one.
+        pool.selector.weight = torch.nn.Parameter(torch.empty(1, 1))
+        pool.selector.reset_parameters()
+    pool.connector = SelectionConnect(remove_self_loops=False)
+    return pool
 
 
 def _sag_pool(
     in_channels: int,
     ratio: float,
     _avg_node_num: Optional[float],
-    nonlinearity: str | Callable,
+    _nonlinearity: str | Callable,
 ) -> torch.nn.Module:
-    return SAGPooling(in_channels, ratio=ratio, nonlinearity=nonlinearity)
+    # Fix the paper configuration instead of inheriting TGP's GraphConv default.
+    pool = SAGPooling(in_channels, ratio=ratio, GNN=GCNConv,
+                      nonlinearity="tanh", remove_self_loops=False)
+    pool.connector = SelectionConnect(remove_self_loops=False)
+    return pool
 
 
 def _asap_pool(

@@ -1,7 +1,7 @@
 from typing import Optional
 
-from gplab.benchmark.case import (
-    BenchmarkCase,
+from gplab.benchmark.config import (
+    ExperimentConfig,
     ModelConfig,
     PoolConfig,
     SeedPolicy,
@@ -9,10 +9,10 @@ from gplab.benchmark.case import (
     TrainingConfig,
 )
 from gplab.benchmark.execution import ExecutionOptions
-from gplab.benchmark.request import BenchmarkRequest
+from gplab.jobs.job import ExperimentJob
 
 
-def build_cli_request(
+def build_cli_job(
     *,
     model_config: dict,
     training_config: dict,
@@ -31,7 +31,7 @@ def build_cli_request(
     allow_duplicate_seeds: bool,
     split_train: Optional[float],
     split_val: Optional[float],
-) -> BenchmarkRequest:
+) -> ExperimentJob:
     """Apply CLI overrides to TOML defaults, then construct validated benchmark values."""
     if "model" not in model_config:
         raise ValueError("Missing [model] section in model config.")
@@ -44,7 +44,7 @@ def build_cli_request(
     training_section = dict(training_config["training"])
     split_section = dict(training_section.get("split", {}))
 
-    case = BenchmarkCase(
+    experiment = ExperimentConfig(
         dataset=dataset_name or "PROTEINS",
         pool=PoolConfig(
             name=pool or "nopool",
@@ -73,12 +73,10 @@ def build_cli_request(
 
     execution_defaults = dict(execution_config.get("execution", {}))
     execution = ExecutionOptions(
-        log_file=log_file if log_file is not None else execution_defaults.get("log_file"),
-        tag=tag if tag is not None else execution_defaults.get("tag"),
         activation_checkpoint=bool(
             activation_checkpoint
             if activation_checkpoint is not None
             else execution_defaults.get("activation_checkpoint", False)
         ),
     )
-    return BenchmarkRequest(case=case, execution=execution)
+    return ExperimentJob(experiment=experiment, execution=execution, log_file=log_file, tag=tag)

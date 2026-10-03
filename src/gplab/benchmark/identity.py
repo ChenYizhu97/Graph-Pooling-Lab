@@ -1,10 +1,8 @@
-from __future__ import annotations
-
+"""Identify requested experiments and group completed records by their actual protocol."""
 import hashlib
 import json
-from typing import Optional
 
-from .case import BenchmarkCase
+from .config import ExperimentConfig
 
 
 def _hash_payload(payload: dict) -> str:
@@ -12,36 +10,26 @@ def _hash_payload(payload: dict) -> str:
     return hashlib.sha1(encoded).hexdigest()[:12]
 
 
-def compute_case_id(case: BenchmarkCase) -> str:
-    """Hash the full case, including the pooling method and requested seed policy."""
-    return _hash_payload(case.to_mapping())
-
-
-def benchmark_payload(case: BenchmarkCase, *, resolved_seeds: Optional[list[int]] = None) -> dict:
-    """Build comparison settings, excluding pool name and using resolved seeds if supplied."""
-    training = case.training.to_mapping()
-    if resolved_seeds is not None:
-        # Auto and list policies are comparable when they resolve to the same
-        # ordered seeds; the policy used to obtain them should not split groups.
-        training["seeds"] = [int(seed) for seed in resolved_seeds]
-
-    return {
-        "dataset": case.dataset,
-        "model": case.model.to_mapping(),
-        "pool_protocol": {
-            "ratio": case.pool.ratio,
-            "nonlinearity": case.pool.nonlinearity,
-        },
-        "training": training,
-    }
-
-
-def compute_benchmark_key(case: BenchmarkCase, *, resolved_seeds: Optional[list[int]] = None) -> str:
-    return _hash_payload(benchmark_payload(case, resolved_seeds=resolved_seeds))
+def compute_experiment_id(config: ExperimentConfig) -> str:
+    """Identify the full requested configuration, including pool and seed policy."""
+    return _hash_payload(config.to_mapping())
 
 
 def compute_record_benchmark_key(record: dict) -> str:
-    """Group records by shared protocol and resolved seeds, independent of pool name."""
-    case = BenchmarkCase.from_mapping(record["case"])
-    seeds = [int(seed) for seed in record["run_plan"]["seeds"]]
-    return compute_benchmark_key(case, resolved_seeds=seeds)
+    """Group pools using the same model, training budget, and actual seeds and splits.
+
+    Seed-generation policies and split fractions do not distinguish completed
+    experiments when they produced identical runs. Concrete splits do: equal seeds
+    alone cannot establish that two records trained and tested on the same examples.
+    """
+    config = record["experiment"]
+    training = {key: value for key, value in config["training"].items()
+                if key not in {"seeds", "split"}}
+    return _hash_payload({
+        "dataset": config["dataset"],
+        "model": config["model"],
+        "pool_protocol": {key: config["pool"][key] for key in ("ratio", "nonlinearity")},
+        "training": training,
+        "runs": [{"seed": run["seed"], "split": run["split"]}
+                 for run in record["result"]["runs"]],
+    })

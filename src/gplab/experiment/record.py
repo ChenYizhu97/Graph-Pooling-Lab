@@ -2,50 +2,20 @@ from typing import Any
 
 import numpy as np
 
-from gplab.benchmark.case import BenchmarkCase
+from gplab.benchmark.config import ExperimentConfig
 from gplab.benchmark.execution import ExecutionOptions
-from gplab.benchmark.identity import compute_record_benchmark_key
-from gplab.benchmark.plan import RunPlan
+from gplab.benchmark.identity import compute_experiment_id, compute_record_benchmark_key
 from gplab.experiment.identity import attach_record_id, require_record_id
 
 ExperimentRecord = dict[str, Any]
 
 
-def build_result(run_records: list[dict], *, trainable_parameters: dict) -> dict:
-    """Normalize persisted run measurements and aggregate final-test accuracy (population std)."""
-    if not run_records:
+def build_result(run_results: list[dict], *, trainable_parameters: dict) -> dict:
+    """Aggregate final-test accuracy using population standard deviation."""
+    if not run_results:
         raise ValueError("Cannot build result from an empty run record list.")
 
-    test_acc = [float(run["test_acc"]) for run in run_records]
-    compact_runs = [
-        {
-            "seed": int(run["seed"]),
-            "best_epoch": int(run["best_epoch"]),
-            "best_val_loss": float(run["best_val_loss"]),
-            "best_val_auxiliary_loss": float(run["best_val_auxiliary_loss"]),
-            "test_acc": float(run["test_acc"]),
-            "training_wall_time_seconds": float(run["training_wall_time_seconds"]),
-            "epochs_trained": int(run["epochs_trained"]),
-            "peak_training_cuda_allocated_bytes": (
-                None
-                if run["peak_training_cuda_allocated_bytes"] is None
-                else int(run["peak_training_cuda_allocated_bytes"])
-            ),
-            "structural_stats": {
-                "total_input_nodes": int(run["structural_stats"]["total_input_nodes"]),
-                "total_output_nodes": int(run["structural_stats"]["total_output_nodes"]),
-                "total_input_edges": int(run["structural_stats"]["total_input_edges"]),
-                "total_output_edges": int(run["structural_stats"]["total_output_edges"]),
-                "total_input_nonzero_edges": int(run["structural_stats"]["total_input_nonzero_edges"]),
-                "total_output_nonzero_edges": int(run["structural_stats"]["total_output_nonzero_edges"]),
-                "num_graphs": int(run["structural_stats"]["num_graphs"]),
-                "mean_node_retention": float(
-                    run["structural_stats"]["mean_node_retention"]
-                ),
-            },
-        }
-        for run in run_records
-    ]
+    test_acc = [float(run["test_acc"]) for run in run_results]
     return {
         "mean": float(np.mean(test_acc)),
         "std": float(np.std(test_acc)),
@@ -53,47 +23,39 @@ def build_result(run_records: list[dict], *, trainable_parameters: dict) -> dict
             "total": int(trainable_parameters["total"]),
             "pooling_module": int(trainable_parameters["pooling_module"]),
         },
-        "runs": compact_runs,
+        "runs": run_results,
     }
 
 
 def build_record(
-    case: BenchmarkCase,
+    experiment: ExperimentConfig,
     *,
     execution: ExecutionOptions,
-    run_plan: RunPlan,
-    runtime: dict,
-    run_records: list[dict],
-    trainable_parameters: dict,
+    environment: dict,
+    result: dict,
+    tag: str | None = None,
+    source_record_id: str | None = None,
 ) -> ExperimentRecord:
-    """Attach a content-derived ID to the case, run plan, runtime, and compact results."""
+    """Combine configuration, measurements, and provenance into a content-addressed record."""
     record = {
-        "case": case.to_mapping(),
+        "experiment": experiment.to_mapping(),
         "execution": execution.to_mapping(),
-        "run_plan": run_plan.to_mapping(),
-        "runtime": runtime,
-        "result": build_result(
-            run_records,
-            trainable_parameters=trainable_parameters,
-        ),
+        "experiment_id": compute_experiment_id(experiment),
+        "environment": environment,
+        "result": result,
+        "tag": tag,
+        "source_record_id": source_record_id,
     }
     return attach_record_id(record)
 
 
 def summarize_record(record: ExperimentRecord) -> dict:
-    """Derive query metrics without rewriting historical fields or record IDs."""
+    """Derive query metrics from completed runs without changing the stored record."""
     ensured = require_record_id(record)
     runs = ensured["result"]["runs"]
-    # Read historical logs without rewriting their persisted fields or IDs.
-    test_acc = [
-        float(run["test_acc"] if "test_acc" in run else run["best_test_acc"])
-        for run in runs
-    ]
+    test_acc = [float(run["test_acc"]) for run in runs]
     val_loss = [float(run["best_val_loss"]) for run in runs]
-    val_auxiliary_loss = [
-        float(run.get("best_val_auxiliary_loss", 0.0))
-        for run in runs
-    ]
+    val_auxiliary_loss = [float(run["best_val_auxiliary_loss"]) for run in runs]
     epochs = [int(run["best_epoch"]) for run in runs]
 
     # Correlation is undefined with fewer than two runs or zero variance;
@@ -104,14 +66,14 @@ def summarize_record(record: ExperimentRecord) -> dict:
 
     summary = {
         "record_id": ensured["record_id"],
-        "case_id": ensured["run_plan"]["case_id"],
+        "experiment_id": ensured["experiment_id"],
         "benchmark_key": compute_record_benchmark_key(ensured),
-        "dataset": ensured["case"]["dataset"],
-        "pool": ensured["case"]["pool"]["name"],
-        "pool_ratio": ensured["case"]["pool"]["ratio"],
-        "pool_nonlinearity": ensured["case"]["pool"]["nonlinearity"],
+        "dataset": ensured["experiment"]["dataset"],
+        "pool": ensured["experiment"]["pool"]["name"],
+        "pool_ratio": ensured["experiment"]["pool"]["ratio"],
+        "pool_nonlinearity": ensured["experiment"]["pool"]["nonlinearity"],
         "activation_checkpoint": bool(ensured["execution"]["activation_checkpoint"]),
-        "model_variant": ensured["case"]["model"]["variant"],
+        "model_variant": ensured["experiment"]["model"]["variant"],
         "runs": len(runs),
         "mean": float(ensured["result"]["mean"]),
         "std": float(ensured["result"]["std"]),
@@ -122,6 +84,6 @@ def summarize_record(record: ExperimentRecord) -> dict:
         "min_test_acc": float(min(test_acc)),
         "val_loss_test_acc_corr": corr,
     }
-    if ensured["execution"].get("tag") is not None:
-        summary["tag"] = ensured["execution"]["tag"]
+    if ensured["tag"] is not None:
+        summary["tag"] = ensured["tag"]
     return summary

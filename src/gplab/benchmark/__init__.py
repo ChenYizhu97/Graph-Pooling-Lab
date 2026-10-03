@@ -1,37 +1,35 @@
-from .case import (
-    BenchmarkCase,
+from .comparability import ComparabilityResult, ComparisonSetting, check_comparability
+from .compatibility import compatible_pools, validate_pool_compatibility
+from .config import (
+    ExperimentConfig,
     ModelConfig,
     PoolConfig,
     SeedPolicy,
     SplitConfig,
     TrainingConfig,
 )
-from .comparability import ComparabilityResult, ComparisonSetting, check_comparability
-from .compatibility import compatible_pools, validate_pool_compatibility
 from .execution import ExecutionOptions
-from .identity import compute_benchmark_key, compute_case_id, compute_record_benchmark_key
-from .plan import RunPlan, SplitIndices
-from .request import BenchmarkRequest
+from .identity import compute_experiment_id, compute_record_benchmark_key
+from .runs import RunSpec, SplitIndices, resolve_runs
 from .seeds import resolve_seeds
 
 __all__ = [
-    "BenchmarkCase",
-    "BenchmarkRequest",
+    "ExperimentConfig",
     "ExecutionOptions",
     "ModelConfig",
     "PoolConfig",
     "SeedPolicy",
-    "RunPlan",
+    "RunSpec",
     "SplitIndices",
     "SplitConfig",
     "TrainingConfig",
-    "compute_benchmark_key",
-    "compute_case_id",
+    "compute_experiment_id",
     "compute_record_benchmark_key",
     "ComparabilityResult",
     "ComparisonSetting",
     "check_comparability",
     "compatible_pools",
+    "resolve_runs",
     "resolve_seeds",
     "validate_pool_compatibility",
 ]

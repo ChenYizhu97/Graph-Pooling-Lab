@@ -7,38 +7,37 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from rich import print as rprint
+from torch_geometric.data import Dataset
 from torch_geometric.nn import summary
 from tqdm import tqdm
 
-from gplab.benchmark.case import TrainingConfig
 from gplab.benchmark.compatibility import (
     resolve_dataset_connectivity_type,
     validate_pool_compatibility,
 )
-from gplab.benchmark.plan import RunPlan, SplitIndices
-from gplab.benchmark.request import BenchmarkRequest
+from gplab.benchmark.config import ExperimentConfig, TrainingConfig
+from gplab.benchmark.execution import ExecutionOptions
+from gplab.benchmark.runs import RunSpec, resolve_runs
 from gplab.data.dataset import load_dataset, split_dataset
+from gplab.environment import collect_environment_info, console_separator, print_experiment_info
 from gplab.experiment.measurements import capture_structural_statistics, count_trainable_parameters
-from gplab.experiment.record import build_record
+from gplab.experiment.record import build_result
 from gplab.experiment.reproducibility import (
     build_loader,
     configure_runtime_threads,
     seed_everything,
 )
 from gplab.model import GraphClassifier
-from gplab.runtime import build_runtime_meta, console_separator, print_experiment_info
 from gplab.train_loop import evaluate_epoch, train_epoch
 
 
 @dataclass
-class PreparedRun:
-    """Loaded dataset, validated run plan, and execution metadata for one request."""
-    request: BenchmarkRequest
-    dataset: object
+class PreparedExperiment:
+    """Loaded data and validated repetitions, ready for model construction and training."""
+    config: ExperimentConfig
+    dataset: Dataset
     dataset_stats: dict
-    run_plan: RunPlan
-    runtime: dict
-    device: torch.device
+    runs: tuple[RunSpec, ...]
 
 
 def _summarize_dataset(dataset) -> dict:
@@ -53,65 +52,58 @@ def _summarize_dataset(dataset) -> dict:
     }
 
 
-def prepare_run(request: BenchmarkRequest, device: torch.device, runtime: dict) -> PreparedRun:
-    """Load the dataset and validate connectivity and split bounds before building a model."""
-    dataset = load_dataset(request.case.dataset)
+def prepare_experiment(
+    config: ExperimentConfig,
+    fixed_runs: tuple[RunSpec, ...] | None = None,
+) -> PreparedExperiment:
+    """Load data, check pool connectivity, and resolve or validate all requested runs."""
+    dataset = load_dataset(config.dataset)
     dataset_stats = _summarize_dataset(dataset)
-    dataset_type = resolve_dataset_connectivity_type(dataset)
     validate_pool_compatibility(
-        dataset_type=dataset_type,
-        pool_name=request.case.pool.name,
-        pre_conv=request.case.model.pre_conv,
-        post_conv=request.case.model.post_conv,
+        dataset_type=resolve_dataset_connectivity_type(dataset),
+        pool_name=config.pool.name,
+        pre_conv=config.model.pre_conv,
+        post_conv=config.model.post_conv,
     )
-    run_plan = request.fixed_run_plan or RunPlan.build(request.case, dataset_stats["num_graphs"])
-    run_plan.validate_for_execution(
-        runs=request.case.training.runs,
-        dataset_size=dataset_stats["num_graphs"],
-    )
-    return PreparedRun(
-        request=request,
-        dataset=dataset,
-        dataset_stats=dataset_stats,
-        run_plan=run_plan,
-        runtime=runtime,
-        device=device,
+    return PreparedExperiment(
+        config=config, dataset=dataset, dataset_stats=dataset_stats,
+        runs=resolve_runs(config.training, len(dataset), fixed_runs),
     )
 
 
-def _build_model(prepared: PreparedRun) -> GraphClassifier:
-    case = prepared.request.case
-    execution = prepared.request.execution
+def _build_model(
+    prepared: PreparedExperiment, execution: ExecutionOptions, device: torch.device,
+) -> GraphClassifier:
+    config = prepared.config
     return GraphClassifier(
         prepared.dataset_stats["num_node_features"],
         prepared.dataset_stats["num_classes"],
-        pool_method=case.pool.name,
-        ratio=case.pool.ratio,
-        pool_nonlinearity=case.pool.nonlinearity,
-        config=case.model,
+        pool_method=config.pool.name,
+        ratio=config.pool.ratio,
+        pool_nonlinearity=config.pool.nonlinearity,
+        config=config.model,
         avg_node_num=prepared.dataset_stats["avg_node_num"],
         activation_checkpoint=execution.activation_checkpoint,
-    ).to(prepared.device)
+    ).to(device)
 
 
-def _execute_single_run(
+def execute_run(
     model,
     dataset,
     run_idx: int,
-    run_seed: int,
-    run_split: SplitIndices,
+    run: RunSpec,
     train: TrainingConfig,
     device: torch.device,
     *,
     show_progress: bool,
 ) -> dict:
     """Train from a seeded reset, restore minimum validation loss, then test exactly once."""
-    seed_everything(run_seed)
-    train_dataset, val_dataset, test_dataset = split_dataset(dataset, run_split.to_mapping())
+    seed_everything(run.seed)
+    train_dataset, val_dataset, test_dataset = split_dataset(dataset, run.split.to_mapping())
 
-    train_loader = build_loader(train_dataset, train.batch_size, shuffle=True, seed=run_seed)
-    val_loader = build_loader(val_dataset, train.batch_size, shuffle=False, seed=run_seed)
-    test_loader = build_loader(test_dataset, train.batch_size, shuffle=False, seed=run_seed)
+    train_loader = build_loader(train_dataset, train.batch_size, shuffle=True, seed=run.seed)
+    val_loader = build_loader(val_dataset, train.batch_size, shuffle=False, seed=run.seed)
+    test_loader = build_loader(test_dataset, train.batch_size, shuffle=False, seed=run.seed)
 
     # The model is reused across runs. Reset it after seeding and create a new
     # optimizer so neither learned weights nor Adam state carry into the next run.
@@ -176,7 +168,7 @@ def _execute_single_run(
         test = evaluate_epoch(model, test_loader, loss_fn, device)
 
     return {
-        "seed": run_seed,
+        **run.to_mapping(),
         "best_epoch": best_epoch,
         "best_val_loss": best_val_loss,
         "best_val_auxiliary_loss": best_val_auxiliary_loss,
@@ -188,52 +180,40 @@ def _execute_single_run(
     }
 
 
-def run_experiment(request: BenchmarkRequest, *, emit_text: bool = True) -> dict:
-    """Execute all planned seeds with one reusable model and return a canonical record."""
+def run_experiment(
+    config: ExperimentConfig,
+    execution: ExecutionOptions,
+    *,
+    fixed_runs: tuple[RunSpec, ...] | None = None,
+    emit_text: bool = True,
+) -> dict:
+    """Prepare and train an experiment; return measurements for the job boundary to save.
+
+    The model is reused with a seeded reset for each run. Logging, tags, replay
+    provenance, and final record identity belong to execute_job, not training.
+    """
     configure_runtime_threads()
     seed_everything(0)
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    runtime = build_runtime_meta(device)
-
+    environment = collect_environment_info(device)
+    prepared = prepare_experiment(config, fixed_runs)
+    model = _build_model(prepared, execution, device)
     if emit_text:
-        print_experiment_info(request.case, request.execution, device)
-
-    prepared = prepare_run(request, device, runtime)
-    model = _build_model(prepared)
-    if emit_text:
+        print_experiment_info(config, execution, device)
         rprint(summary(model, data=prepared.dataset[0].to(device), leaf_module=None, max_depth=5))
 
-    run_records = []
-    for run_idx, (run_seed, run_split) in enumerate(
-        zip(prepared.run_plan.seeds, prepared.run_plan.splits),
-        start=1,
-    ):
-        run_records.append(
-            _execute_single_run(
-                model,
-                prepared.dataset,
-                run_idx=run_idx,
-                run_seed=run_seed,
-                run_split=run_split,
-                train=request.case.training,
-                device=device,
-                show_progress=emit_text,
-            )
-        )
-        if emit_text and run_idx != request.case.training.runs:
+    run_results = []
+    for run_idx, run in enumerate(prepared.runs, start=1):
+        run_results.append(execute_run(
+            model, prepared.dataset, run_idx=run_idx, run=run,
+            train=config.training, device=device, show_progress=emit_text,
+        ))
+        if emit_text and run_idx != config.training.runs:
             rprint(console_separator("-"))
 
-    # Normal training has now materialized any lazy parameters in custom pools.
-    trainable_parameters = count_trainable_parameters(model)
-    record = build_record(
-        request.case,
-        execution=request.execution,
-        run_plan=prepared.run_plan,
-        runtime=prepared.runtime,
-        run_records=run_records,
-        trainable_parameters=trainable_parameters,
-    )
+    # Training materializes lazy parameters, so count them only after execution.
+    result = build_result(run_results, trainable_parameters=count_trainable_parameters(model))
     del model
     if device.type == "cuda":
         torch.cuda.empty_cache()
-    return record
+    return {"environment": environment, "result": result}

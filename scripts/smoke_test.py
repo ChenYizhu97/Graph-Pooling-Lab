@@ -15,13 +15,13 @@ from gplab.layers.pool import POOLING_PROFILES
 
 
 def main() -> None:
-    """Exercise the public job boundary and fail if any requested case fails."""
+    """Exercise the public job boundary and fail if any requested experiment fails."""
     python = shlex.split(os.environ.get("PYTHON_CMD", sys.executable))
     results = []
     for dataset in os.environ.get("DATASETS", " ".join(DATASET_PROFILES)).split():
         for pool in os.environ.get("POOLS", " ".join(POOLING_PROFILES)).split():
             job = {
-                "case": {
+                "experiment": {
                     "dataset": dataset,
                     "pool": {"name": pool, "ratio": float(os.environ.get("POOL_RATIO", "0.5"))},
                     "model": {"variant": os.environ.get("MODEL_VARIANT", "sum")},
@@ -34,8 +34,8 @@ def main() -> None:
                         "seeds": {"mode": "auto", "base": int(os.environ.get("SEED_BASE", "20260320"))},
                     },
                 },
-                "execution": {"log_file": os.environ.get("LOG_FILE") or None,
-                              "tag": f"{os.environ.get('TAG_PREFIX', 'smoke')}_{dataset}_{pool}"},
+                "log_file": os.environ.get("LOG_FILE") or None,
+                "tag": f"{os.environ.get('TAG_PREFIX', 'smoke')}_{dataset}_{pool}",
             }
             completed = subprocess.run(
                 [*python, "-m", "gplab.cli.run_train_job", "--job-stdin", "--output-format", "json"],

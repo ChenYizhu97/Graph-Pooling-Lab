@@ -61,8 +61,8 @@ The current focus is on:
 ## Install
 
 GPLab uses [uv](https://docs.astral.sh/uv/) to manage its local environment and
-locked dependencies. Python 3.10 is selected by `.python-version`; the lock keeps
-the previously tested PyTorch 2.1.0, PyG 2.4.0, and NumPy 1.26.0 versions.
+locked dependencies. Python 3.14 is selected by `.python-version`; the lock uses
+PyTorch 2.10.0 (CUDA 12.8), PyG 2.8.0.post1, TGP 1.0.2, and NumPy 2.5.3.
 
 ```bash
 uv sync --locked
@@ -75,6 +75,19 @@ Prefix the commands below with `uv run`, or activate `.venv` first. No Conda
 environment is required. `pyproject.toml` is the dependency source of truth;
 commit `uv.lock` when intentionally updating dependencies with `uv lock`.
 The default Linux PyTorch wheel includes CUDA dependencies and also runs on CPU.
+The torch-scatter wheel source and constraint match Torch 2.10 / CUDA 12.8;
+update them together if changing the Torch build or target platform.
+This lock targets the standard CPython 3.14 Linux/CUDA environment. The explicit
+PyTorch index selects CUDA 12.8; it does not replace the system CUDA Toolkit or
+NVIDIA driver. TOML configuration is parsed by standard-library `tomllib`.
+
+TopK and SAG are native TGP modules. TopK retains its normalized learned
+projection, including for one-channel inputs. SAG explicitly uses `GCNConv`
+and `tanh` (the generic pooling nonlinearity option does not override SAG).
+All poolers return `tgp.src.PoolingOutput`; the binary-to-binary signatures are unchanged.
+The TGP version is pinned because a small connector fix corrects its selected-node edge
+ordering; run `uv run python -m unittest discover -s tests -p test_pooling_integration.py -v`
+when changing this backend.
 
 To inspect fixed-cluster dense pooling or run one-epoch integration jobs:
 
@@ -132,12 +145,14 @@ Job JSON request per `gplab-run-job` process.
 
 ## Job Configuration
 
-A Job JSON describes exactly one experiment case. Optional fields are filled
-from GPLab's automation defaults before the request is validated.
+A Job JSON describes exactly one experiment. Optional fields are filled
+from GPLab's automation defaults before the job is validated.
+`execution` controls activation checkpointing; `log_file` and `tag` are top-level
+job fields. Optional `runs` supplies explicit `{seed, split}` entries for replay.
 
 ```json
 {
-  "case": {
+  "experiment": {
     "dataset": "PROTEINS",
     "pool": {
       "name": "sagpool",
@@ -172,11 +187,9 @@ from GPLab's automation defaults before the request is validated.
       }
     }
   },
-  "execution": {
-    "log_file": "runs/bench.jsonl",
-    "tag": "baseline_proteins",
-    "activation_checkpoint": false
-  }
+  "execution": {"activation_checkpoint": false},
+  "log_file": "runs/bench.jsonl",
+  "tag": "baseline_proteins"
 }
 ```
 
@@ -184,7 +197,7 @@ Run from a file, inline JSON, or stdin:
 
 ```bash
 gplab-run-job --job-file job.json --output-format json
-gplab-run-job --job-json '{"case":{"dataset":"MUTAG","pool":{"name":"nopool","ratio":0.5},"training":{"runs":1,"epochs":1,"patience":0}}}' --output-format json
+gplab-run-job --job-json '{"experiment":{"dataset":"MUTAG","pool":{"name":"nopool","ratio":0.5},"training":{"runs":1,"epochs":1,"patience":0}}}' --output-format json
 cat job.json | gplab-run-job --job-stdin --output-format json
 ```
 
@@ -194,7 +207,7 @@ to stderr. Invalid jobs return `ok=false`, `kind="job_error"`, and a structured,
 field-specific error.
 
 A successful response contains the canonical `record`, a derived `summary`, and
-entrypoint `context`. If several cases run concurrently, give them separate log
+entrypoint `context`. If several experiments run concurrently, give them separate log
 files or serialize JSONL appends externally.
 
 See [AGENT_REFERENCE.md](AGENT_REFERENCE.md) for the complete schema and output
@@ -204,10 +217,11 @@ contract.
 
 One JSONL line is one canonical `ExperimentRecord` containing:
 
-- the benchmark-defining `case`;
+- the benchmark-defining `experiment`;
 - execution-only settings;
-- the resolved seeds and concrete split indices in `run_plan`;
-- runtime metadata;
+- the actual seed and concrete split for each entry in `result.runs`;
+- software/device metadata in `environment`;
+- `experiment_id`, `tag`, and optional replay provenance in `source_record_id`;
 - per-run and aggregate results, including compact training and pooled-graph
   measurements;
 - a content-derived `record_id`.
@@ -230,19 +244,20 @@ Query records or build a grouped benchmark report:
 gplab-query --log-file runs/bench.jsonl
 gplab-query --log-file runs/bench.jsonl --report
 gplab-query --log-file runs/bench.jsonl --model-variant plain
-gplab-query --log-file runs/bench.jsonl --show-case --show-replay
+gplab-query --log-file runs/bench.jsonl --show-experiment --show-replay
 ```
 
-Replay reconstructs a request from the stored case and resolved run plan. It
-uses the recorded seed list and the exact stored train/validation/test indices:
+Replay reconstructs a Job from the stored configuration and `result.runs`. It
+retains the configuration and experiment ID, and executes the recorded seeds and
+exact train/validation/test indices through the same training path:
 
 ```bash
 gplab-replay --log-file runs/bench.jsonl --record-id <record_id>
 gplab-replay --log-file runs/bench.jsonl --record-id <record_id> --run
 ```
 
-Without `--run`, replay only reconstructs the request and checks selected runtime
-metadata; JSON output includes that request in the top-level `job` field. Combine
+Without `--run`, replay only reconstructs the request and checks selected environment
+metadata; JSON output includes that Job in the top-level `job` field. Combine
 `--run` with `--replay-log-file` to append a rerun to another JSONL log.
 
 ## Supported Datasets
@@ -288,10 +303,17 @@ The builder receives `in_channels`, `ratio`, `avg_node_num`, and `nonlinearity`
 and must return a `torch.nn.Module` (or `None` for no pooling). A pooling module
 must:
 
-- accept `x`, `edge_index`, `batch`, and optional `edge_weight`;
-- return `PoolingOutput` with `x`, `edge_index`, and `batch`, plus optional
-  `edge_weight`, `perm`, `score`, and `aux_loss`;
+- accept keyword arguments `x`, `adj`, `batch`, and optional `edge_weight`;
+- return `tgp.src.PoolingOutput` with sparse `x`, `edge_index`, and `batch`,
+  plus optional `edge_weight`, selection output `so`, and named `loss` terms;
 - implement `reset_parameters()`.
+
+Loss dictionary values must be scalar tensors with method-specific weights already
+applied. The classifier sums them without detaching gradients. No losses means
+`loss=None` or `{}`. Selection information stays in `so`; GPLab does not add
+`perm`, `score`, or `aux_loss` fields. The `gplab.layers.pool.PoolingOutput` export
+is the TGP class itself. The backbone still consumes sparse graph batches;
+a shared output class does not make arbitrary dense poolers interchangeable.
 
 `signatures` accepts sets, frozensets, lists, or tuples and is stored as a
 `frozenset`. Declare each supported input/output pair explicitly. For example,
@@ -327,25 +349,30 @@ the existing training entry points continue to load the native default.
 This checks declared graph-domain compatibility. Keep the actual dataset
 instances, splits, and training rules shared when executing the comparison.
 The single-pool API is `benchmark.compatibility.validate_pool_compatibility`;
-`compatible_pools` lists compatible built-ins. The former single-pool
-`validate_comparability`/`comparable_pools` names have been replaced to distinguish
-compatibility checks from pool-set verdicts.
+`compatible_pools` lists compatible built-ins for one dataset/model setting.
 
 ## Configuration and Layout
 
 `config/model.toml` defines model defaults, including the independent
 `pre_conv` and `post_conv` roles. `config/experiment.toml` defines training,
 split, seed, and execution defaults. CLI flags override these files before a
-`BenchmarkCase` is built.
+`ExperimentConfig` is built.
 
 ```text
 src/gplab/
-  benchmark/      # cases, requests, run plans, identities, compatibility
+  benchmark/      # configuration, run specifications, identities, compatibility
   cli/            # gplab-* entrypoints
   data/           # TU profiles, loading, and split helpers
   experiment/     # training orchestration, measurements, records, queries
   graph/          # connectivity semantics
-  jobs/           # Job JSON schema and request adapter
+  jobs/           # job parsing, execution, logging, and CLI responses
   layers/         # GNN and pooling profiles and adapters
   model/          # shared graph classifier
 ```
+
+The orchestration follows a single path:
+`ExperimentJob -> prepare_experiment -> execute_run -> build_record -> JSONL/response`.
+`ExperimentConfig` describes the requested experiment; `RunSpec` binds each seed
+to its concrete split; `PreparedExperiment` holds loaded data and validated runs.
+The device is passed directly, and `environment` is a descriptive snapshot.
+See [PROTOCOL.md](PROTOCOL.md#execution-flow) for responsibilities and replay rules.

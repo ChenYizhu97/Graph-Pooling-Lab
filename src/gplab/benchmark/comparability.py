@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from gplab.data.profiles import get_dataset_profile
 from gplab.graph import ConnectivityType
 
-from .case import ModelConfig
 from .compatibility import pool_compatibility_error
+from .config import ModelConfig
 
 
 @dataclass(frozen=True)

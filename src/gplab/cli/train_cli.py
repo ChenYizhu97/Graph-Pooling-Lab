@@ -1,8 +1,9 @@
+import tomllib
 from typing import Annotated, Optional
 
-import toml
 import typer
 
+from gplab.cli.job import build_cli_job
 from gplab.cli.options import resolve_seed_options
 from gplab.cli.output import (
     build_error_payload,
@@ -10,8 +11,7 @@ from gplab.cli.output import (
     redirect_stdout_for_json,
     validate_output_format,
 )
-from gplab.cli.request import build_cli_request
-from gplab.experiment.train_result import execute_train_request
+from gplab.jobs.execute import execute_job
 from gplab.paths import default_config_path
 
 app = typer.Typer(pretty_exceptions_enable=False)
@@ -77,8 +77,10 @@ def main(
     json_output = output_format == "json"
     try:
         with redirect_stdout_for_json(json_output):
-            model_config_data = toml.load(model_config)
-            experiment_config_data = toml.load(experiment_config)
+            with open(model_config, "rb") as config_file:
+                model_config_data = tomllib.load(config_file)
+            with open(experiment_config, "rb") as config_file:
+                experiment_config_data = tomllib.load(config_file)
             training_section = experiment_config_data.get("training", {})
             seeds_section = training_section.get("seeds", {})
             (
@@ -94,7 +96,7 @@ def main(
                 seeds_section=seeds_section,
             )
 
-            request = build_cli_request(
+            job = build_cli_job(
                 model_config=model_config_data,
                 training_config=experiment_config_data,
                 execution_config=experiment_config_data,
@@ -114,12 +116,12 @@ def main(
                 split_val=split_val,
             )
 
-            payload = execute_train_request(
-                request,
+            payload = execute_job(
+                job,
                 emit_text=output_format == "text",
                 context={
                     "source": "cli_options",
-                    "case_id": request.case_id,
+                    "experiment_id": job.experiment_id,
                     "model_config": model_config,
                     "experiment_config": experiment_config,
                 },

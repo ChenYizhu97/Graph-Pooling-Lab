@@ -34,7 +34,7 @@ def main(
         str,
         typer.Option(help="Sort field: mean, std, avg_best_epoch, avg_val_loss."),
     ] = "mean",
-    show_case: Annotated[bool, typer.Option(help="Include the full case block in default output.")] = False,
+    show_experiment: Annotated[bool, typer.Option(help="Include the full experiment block in default output.")] = False,
     show_replay: Annotated[bool, typer.Option(help="Show gplab-replay command for each matched record.")] = False,
     output_format: Annotated[str, typer.Option(help="Output format: text or json.")] = "text",
 ):
@@ -47,7 +47,7 @@ def main(
             model_variant=model_variant,
             tag=tag,
             sort_by=sort_by,
-            show_case=show_case,
+            show_experiment=show_experiment,
             show_replay=show_replay,
         )
         records = load_record_log(log_file)

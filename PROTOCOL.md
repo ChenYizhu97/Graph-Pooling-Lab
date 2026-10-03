@@ -5,19 +5,44 @@ records, summaries, and reports are adapters around this protocol.
 
 ## Core Unit
 
-The core unit is a `BenchmarkCase`: one graph-pooling benchmark case under a
+The core unit is an `ExperimentConfig`: one graph-pooling benchmark experiment under a
 shared graph-classification protocol.
 
 ```text
-BenchmarkCase =
+ExperimentConfig =
   dataset
   model
   pool
   training
 ```
 
-Execution-only choices such as `log_file`, `tag`, and `activation_checkpoint`
-belong to `ExecutionOptions`, not to the benchmark case.
+`ExecutionOptions` holds `activation_checkpoint`. `ExperimentJob` combines the
+configuration and execution options with `log_file`, `tag`, optional fixed runs,
+and replay provenance. Those job fields do not belong to the training loop.
+
+## Execution Flow
+
+1. Parse CLI/TOML or JSON into an `ExperimentJob`.
+2. Configure threads and random state, select the device, and capture `environment`.
+3. `prepare_experiment` loads data, checks pool compatibility, and resolves runs.
+4. Each `RunSpec(seed, split)` drives one reset/train/validate/final-test cycle.
+5. Aggregate measurements; the job boundary builds the final record and optionally
+   appends it to JSONL before returning the CLI response.
+
+`PreparedExperiment` contains configuration, loaded data, dataset statistics,
+and validated runs. Execution options and the device are passed explicitly to
+model construction. Environment metadata is descriptive and never controls training.
+
+Every run stores its actual seed and split alongside its measurements in
+`result.runs`. Replay copies those into the job's `runs` field, bypassing generation
+without rewriting the original configuration or changing `experiment_id`.
+`source_record_id` identifies the replay's source; `record_id` hashes the completed
+record. Split validation rejects empty, repeated, overlapping, missing, and
+out-of-range indices before training.
+
+Benchmark grouping uses actual seeds and concrete splits, not just the requested
+seed policy and split fractions. It remains a protocol grouping aid, not evidence
+that dataset contents or software environments are identical.
 
 ## Data Protocol
 
@@ -26,7 +51,7 @@ belong to `ExecutionOptions`, not to the benchmark case.
 - Loader option: `use_node_attr=True`.
 - Dataset names are restricted to the project whitelist.
 - Each run builds a seeded train/validation/test split.
-- `split.test` is derived as `1 - split.train - split.val`.
+- The test fraction is derived as `1 - split.train - split.val`.
 
 ## Evaluation Protocol
 
@@ -62,7 +87,7 @@ belong to `ExecutionOptions`, not to the benchmark case.
 
 ## Model Protocol
 
-All benchmark cases use one shared backbone shape:
+All benchmark experiments use one shared backbone shape:
 
 ```text
 pre_gnn -> pre_conv -> pool -> post_conv -> readout -> post_gnn
@@ -84,7 +109,9 @@ Model rules:
 
 ## Pool Protocol
 
-All pooling modules must return `PoolingOutput`.
+All pooling modules accept keyword arguments `x`, `adj`, `batch`, and optional
+`edge_weight`, and return the native `tgp.src.PoolingOutput`. GPLab re-exports
+that class; it does not define a second output container.
 
 Required fields:
 
@@ -95,9 +122,16 @@ Required fields:
 Optional fields:
 
 - `edge_weight`
-- `perm`
-- `score`
-- `aux_loss`
+- `so`: native TGP selection/assignment information, when available
+- `loss`: a dictionary of named, already-weighted scalar tensors
+
+The classifier sums `loss.values()` with gradients intact, or returns no
+auxiliary loss when the dictionary is absent/empty. Existing coefficients remain
+`0.5 * mincut + orthogonality` and `0.1 * link + 0.1 * entropy`. The shared
+backbone requires `x: [N,F]`, `edge_index: [2,E]`, and `batch: [N]`; current
+dense-method adapters still emit sparse graph batches with fixed cluster slots.
+TGP's optional `so`/derived mask are not fabricated for backends that do not
+expose assignments.
 
 Benchmark measurements are collected by the experiment runner and are not part
 of `PoolingOutput`. Pooling modules remain responsible only for producing the
@@ -172,6 +206,14 @@ Built-in domains remain conservative, following `audits/COMPARABILITY_ALIGNMENT.
 `nopool` declares `{U -> U, W -> W}`; TopK, SAG, and sparsepool declare `{U -> U}`;
 ASAP, DiffPool, MinCut, and densepool declare `{U -> W}`. Accepting an
 `edge_weight` argument alone is not evidence of a method-faithful W-input path.
+
+TopK and SAG use native TGP 1.0.2 modules with a connector edge-order fix. TopK scores are the
+configured activation of the normalized learned feature projection, including
+when the feature width is one. SAG scores are `tanh(GCNConv(X, A))`, with no
+additional learned selection projection; its scorer and activation are fixed.
+Both retain induced edges, including existing self-loops, without degree or
+edge-weight normalization. These backend choices do not broaden their declared
+input/output domains. Other pooling implementations are unchanged.
 
 Dense assignment pooling methods (`mincutpool`, `diffpool`, `densepool`) follow
 one rule: input masks suppress padded input nodes before pooling, output nodes

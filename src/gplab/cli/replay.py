@@ -3,17 +3,17 @@ from typing import Annotated, Optional
 import torch
 import typer
 
-from gplab.benchmark.request import BenchmarkRequest
 from gplab.cli.output import (
     build_error_payload,
     emit_json,
     redirect_stdout_for_json,
     validate_output_format,
 )
+from gplab.environment import collect_environment_info
 from gplab.experiment.record import summarize_record
 from gplab.experiment.record_log import RecordLogError, find_record_by_id, load_record_log
-from gplab.experiment.train_result import execute_train_request
-from gplab.runtime import build_runtime_meta
+from gplab.jobs.execute import execute_job
+from gplab.jobs.job import ExperimentJob
 
 app = typer.Typer(pretty_exceptions_enable=False)
 
@@ -50,16 +50,11 @@ def main(
     json_output = output_format == "json"
     try:
         record = find_record_by_id(load_record_log(log_file), record_id)
-        replay_request = BenchmarkRequest.from_record_for_replay(record, replay_log_file=replay_log_file)
-        replay_job = replay_request.to_mapping()
-        # Keep source and replay IDs distinct: replacing auto seeds with an
-        # explicit list changes case identity even when the actual runs match.
-        source_case_id = record["run_plan"]["case_id"]
-        replay_case_id = replay_request.case_id
-
+        replay_job_spec = ExperimentJob.from_record(record, log_file=replay_log_file)
+        replay_job = replay_job_spec.to_mapping()
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        current_runtime = build_runtime_meta(device)
-        status, details = _compatibility_status(record["runtime"], current_runtime)
+        current_environment = collect_environment_info(device)
+        status, details = _compatibility_status(record["environment"], current_environment)
         replay_payload = {
             "ok": True,
             "kind": "replay_result",
@@ -67,8 +62,8 @@ def main(
             "job": replay_job,
             "context": {
                 "source": "record_replay",
-                "case_id": replay_case_id,
-                "source_case_id": source_case_id,
+                "experiment_id": replay_job_spec.experiment_id,
+                "source_record_id": record["record_id"],
             },
             "paths": {
                 "replay_log_file": replay_log_file,
@@ -82,28 +77,26 @@ def main(
         if not json_output:
             print(f"Replay record: {record['record_id']}")
             print("Replay mode: in-process record replay")
-            print(f"Source case_id: {source_case_id}")
-            print(f"Replay job case_id: {replay_case_id}")
+            print(f"Experiment ID: {replay_job_spec.experiment_id}")
             if replay_log_file is not None:
                 print(f"Replay log file: {replay_log_file}")
             if status == "compatible":
-                print("Runtime compatibility: current environment matches recorded runtime on checked fields.")
+                print("Environment compatibility: current environment matches recorded environment on checked fields.")
             else:
-                print(f"Runtime compatibility: {status}")
+                print(f"Environment compatibility: {status}")
                 for item in details:
                     if not item["match"]:
                         print(f"  - {item['field']}: recorded={item['recorded']!r}, current={item['current']!r}")
 
         if run:
             with redirect_stdout_for_json(json_output):
-                run_payload = execute_train_request(
-                    replay_request,
+                run_payload = execute_job(
+                    replay_job_spec,
                     emit_text=not json_output,
                     context={
                         "source": "record_replay",
                         "source_record_id": record["record_id"],
-                        "source_case_id": source_case_id,
-                        "case_id": replay_case_id,
+                        "experiment_id": replay_job_spec.experiment_id,
                         "job": replay_job,
                     },
                 )

@@ -17,6 +17,14 @@ rules live in [PROTOCOL.md](PROTOCOL.md).
 
 `["MUTAG", "PROTEINS", "ENZYMES", "FRANKENSTEIN", "Mutagenicity", "AIDS", "DD", "NCI1", "COX2"]`
 
+### POOL OUTPUT
+
+Use native `tgp.src.PoolingOutput`; GPLab only re-exports it. Pool calls use
+`x`, `adj`, `batch`, and optional `edge_weight` keywords. The backbone requires
+sparse output graph tensors. Selection metadata stays in `so`; auxiliary losses
+are named, already-weighted scalar tensors in `loss`, summed by the classifier.
+TopK/SAG are native TGP modules with a small connector ordering correction.
+
 ### POOL COMPARABILITY
 
 Pool signatures are a non-empty set of input/output connectivity pairs. For the
@@ -49,47 +57,57 @@ Built-in scalar-input domains are not broadened merely by supporting sets.
 ### INTERFACE_MODEL
 
 Use Job JSON for agent-driven execution. A Job JSON request contains one
-benchmark-defining `case` and optional execution settings.
+benchmark-defining `experiment` and optional execution settings.
 
 Successful execution returns a `train_result` whose `record` is the canonical
 persisted `ExperimentRecord`. Query and replay operate on JSONL logs containing
-those records. A `case_id` identifies the benchmark-defining case; replay
-responses report both the source record case id and the replay case id.
+those records. An `experiment_id` identifies the requested configuration and
+remains unchanged during replay. `source_record_id` identifies the source record.
 
 ### JOB_JSON_SCHEMA
 
-A Job JSON describes exactly one experiment case. Do not send arrays of
+A Job JSON describes exactly one experiment. Do not send arrays of
 datasets, pools, ratios, or training settings; schedule those as separate
 `gplab-run-job` processes.
 
 Required top-level fields:
 
-- `case`
+- `experiment`
 
 Optional top-level fields:
 
-- `execution`
+- `execution`: object containing `activation_checkpoint`
+- `log_file`: string or null, append destination for this job only
+- `tag`: string or null
+- `runs`: null or a nonempty array of `{seed, split}` objects for exact replay
+- `source_record_id`: string or null, the record being replayed
 
-Required `case` fields:
+Each explicit run contains an integer `seed` and a `split` object with nonempty
+integer arrays `train`, `val`, and `test`. The number of runs must equal
+`experiment.training.runs`. Once data is loaded, partitions must cover every
+example exactly once, without overlaps or out-of-range indices. Explicit runs
+bypass seed/split generation; they do not rewrite the requested seed policy.
+
+Required `experiment` fields:
 
 - `dataset`
 - `pool`
 - `training`
 
-Optional `case` fields:
+Optional `experiment` fields:
 
 - `model`
 
-Required `case.pool` fields:
+Required `experiment.pool` fields:
 
 - `name`: string
 - `ratio`: number in `(0, 1]`
 
-Optional `case.pool` fields:
+Optional `experiment.pool` fields:
 
 - `nonlinearity`: non-empty string
 
-Optional `case.model` fields:
+Optional `experiment.model` fields:
 
 - `hidden_features`: integer
 - `nonlinearity`: string
@@ -100,25 +118,23 @@ Optional `case.model` fields:
 - `post_gnn`: integer array
 - `variant`: `"sum"` or `"plain"`
 
-Required `case.training` fields:
+Required `experiment.training` fields:
 
 - `runs`: integer greater than 0
 - `patience`: integer greater than or equal to 0
 - `epochs`: integer greater than 0
 
-Optional `case.training` fields:
+Optional `experiment.training` fields:
 
 - `lr`: positive finite number
 - `batch_size`: integer greater than 0
 - `split`: object with `train` and `val`
 - `seeds`: object with `mode`, `base`, `values`, and `allow_duplicates`
 
-`case.training.seeds.mode` is `"auto"` or `"list"`.
+`experiment.training.seeds.mode` is `"auto"` or `"list"`.
 
 Optional `execution` fields:
 
-- `log_file`: string or null
-- `tag`: string or null
 - `activation_checkpoint`: boolean
 
 Omitted optional fields use GPLab automation defaults. Unknown fields are
@@ -128,7 +144,7 @@ Minimal example:
 
 ```json
 {
-  "case": {
+  "experiment": {
     "dataset": "MUTAG",
     "pool": {
       "name": "nopool",
@@ -147,7 +163,7 @@ Complete example:
 
 ```json
 {
-  "case": {
+  "experiment": {
     "dataset": "PROTEINS",
     "pool": {
       "name": "sagpool",
@@ -182,11 +198,11 @@ Complete example:
       }
     }
   },
-  "execution": {
-    "log_file": null,
-    "tag": null,
-    "activation_checkpoint": false
-  }
+  "execution": {"activation_checkpoint": false},
+  "log_file": null,
+  "tag": null,
+  "runs": null,
+  "source_record_id": null
 }
 ```
 
@@ -198,28 +214,20 @@ Records are append-only JSONL entries produced by executed requests.
 ```json
 {
   "record_id": "c3433057e520",
-  "case": {
-    "...": "BenchmarkCase mapping"
+  "experiment": {
+    "...": "ExperimentConfig mapping"
   },
   "execution": {
     "...": "ExecutionOptions mapping"
   },
-  "run_plan": {
-    "case_id": "f7a12815cbc5",
-    "seeds": [457750178],
-    "splits": [
-      {
-        "train": [0, 1],
-        "val": [2],
-        "test": [3]
-      }
-    ]
-  },
-  "runtime": {
+  "experiment_id": "f7a12815cbc5",
+  "tag": null,
+  "source_record_id": null,
+  "environment": {
     "created_at_utc": "2026-07-02T00:00:00+00:00",
-    "python_version": "3.10.13",
-    "torch_version": "2.1.0",
-    "torch_geometric_version": "2.4.0",
+    "python_version": "3.14.7",
+    "torch_version": "2.10.0+cu128",
+    "torch_geometric_version": "2.8.0.post1",
     "device": "cpu",
     "cuda_available": false,
     "cudnn_deterministic": true,
@@ -235,6 +243,7 @@ Records are append-only JSONL entries produced by executed requests.
     "runs": [
       {
         "seed": 457750178,
+        "split": {"train": [0, 1], "val": [2], "test": [3]},
         "best_epoch": 1,
         "best_val_loss": 1.0,
         "best_val_auxiliary_loss": 0.0,
@@ -258,8 +267,8 @@ Records are append-only JSONL entries produced by executed requests.
 }
 ```
 
-`run_plan` contains `case_id`, resolved `seeds`, and concrete `train` / `val` /
-`test` split indices. `result.mean` and `result.std` are computed from
+`result.runs` stores each seed and its concrete train/validation/test indices
+alongside the measurements. `result.mean` and `result.std` are computed from
 `result.runs[*].test_acc`, the accuracy from the single final test evaluation of
 each run's best validation checkpoint.
 
@@ -283,19 +292,14 @@ counted as stored, and no small-weight threshold is applied. For example,
 `total_output_nonzero_edges / total_output_edges` gives the aggregate nonzero
 fraction when the denominator is positive; leave it undefined for zero edges.
 
-Query and replay can still read historical runs named `best_test_acc`, while
-newly executed runs write only `test_acc`. Historical `peak_cuda_allocated_bytes`
-covered final evaluation as well and must not be interpreted as the new
-training-only peak. Historical records and their IDs are not rewritten.
-
 One record log line is one `ExperimentRecord`. `gplab-query` and `gplab-replay`
 both consume this JSONL format; malformed records return structured config
 errors instead of being treated as partial records.
 
-Replay rebuilds a request from `case`, `execution`, and the recorded run plan;
-the replay job uses `case.training.seeds.mode="list"` and executes the stored
-concrete split indices. A replay result reports both the source record case id
-and the replay job case id.
+Replay rebuilds an `ExperimentJob` from `experiment`, `execution`, and the
+seed/split pairs in `result.runs`. The requested seed policy remains unchanged.
+The replay job's `runs` field supplies the exact recorded repetitions, while
+`source_record_id` preserves provenance. The source log destination is never reused.
 
 ### SUMMARY_FIELDS
 
@@ -305,7 +309,7 @@ and the replay job case id.
 Query summaries include:
 
 - `record_id`
-- `case_id`
+- `experiment_id`
 - `benchmark_key`
 - `dataset`
 - `pool`
@@ -323,7 +327,7 @@ Query summaries include:
 - `min_test_acc`
 - `val_loss_test_acc_corr`
 - optional `tag`
-- optional `case`
+- optional `experiment`
 - optional `replay_command`
 
 ## Tools
@@ -361,7 +365,7 @@ Handled failures use this envelope:
   "error": {
     "type": "config_error",
     "message": "Human-readable error.",
-    "field": "case.pool.ratio",
+    "field": "experiment.pool.ratio",
     "expected": "finite number",
     "missing": ["ratio"],
     "unknown": ["extra"],
@@ -398,7 +402,7 @@ Output kind: `train_result` on success. Success responses contain:
 
 - `record`: the canonical `ExperimentRecord`
 - `summary`: a derived result summary
-- `context`: command context with `source="job_json"` and `case_id`; `job_file`
+- `context`: command context with `source="job_json"` and `experiment_id`; `job_file`
   is included only for file input
 
 Invalid jobs return kind `job_error`.
@@ -411,8 +415,8 @@ Invalid job response shape:
   "kind": "job_error",
   "error": {
     "type": "config_error",
-    "message": "Missing required case.pool field(s): ratio.",
-    "field": "case.pool",
+    "message": "Missing required experiment.pool field(s): ratio.",
+    "field": "experiment.pool",
     "expected": "required fields: name, ratio",
     "missing": ["ratio"],
     "details": {
@@ -442,7 +446,7 @@ Report, sort, and inspection flags:
 
 - `--report`
 - `--sort-by`
-- `--show-case`
+- `--show-experiment`
 - `--show-replay`
 
 Output kinds: `query_result`, `query_report`.
@@ -464,28 +468,28 @@ Rebuild a Job JSON request from one record:
 gplab-replay --log-file <path> --record-id <id> --output-format json
 ```
 
-Use `--run` to execute the replay. Replay fixes resolved seeds as
-`case.training.seeds.mode="list"` and writes resolved seeds to
-`case.training.seeds.values`.
+Use `--run` to execute the replay. The exported Job preserves the original
+configuration and includes concrete seeds and splits in its top-level `runs`.
+It can also be submitted directly to `gplab-run-job`.
 
 Output kind: `replay_result`. The top-level `job` is the replayable Job JSON,
-and `context` contains `source="record_replay"`, `source_case_id`, and the
-replay `case_id`. If `--run` is used, `rerun.payload` is a standard
+and `context` contains `source="record_replay"`, `source_record_id`, and the
+unchanged `experiment_id`. If `--run` is used, `rerun.payload` is a standard
 `train_result`.
 
 ## Rules
 
 - Use Job JSON for automation execution.
 - Execute one Job JSON request per `gplab-run-job` process.
-- Let the caller schedule multiple experiment cases as multiple processes.
-- Do not let multiple processes append to the same `execution.log_file`; use
+- Let the caller schedule multiple experiments as multiple processes.
+- Do not let multiple processes append to the same `log_file`; use
   separate JSONL files or serialize writes externally.
 - Treat `record` in `train_result` as the canonical persisted object.
 - Treat `summary` and `context` as derived response metadata.
 - Treat `query_result.summaries` and `query_report.groups[].summaries` as
   derived views, not persisted records.
 - Treat `gplab-train` as a human convenience entrypoint, not the agent protocol.
-- Treat `BenchmarkCase` as the benchmark-defining object.
+- Treat `ExperimentConfig` as the benchmark-defining object.
 - Treat `ExecutionOptions` as execution-only.
 - Do not derive benchmark grouping in query code; use the benchmark comparison layer.
 - Dense pool output nodes are fixed cluster slots. Do not infer pruning or input-node retention.

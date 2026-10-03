@@ -1,6 +1,8 @@
 from typing import Callable, Optional, Union
 
 import torch
+from tgp.select import SelectOutput as TGPSelectOutput
+from tgp.src import PoolingOutput
 from torch import Tensor
 from torch.nn import Linear
 from torch_geometric.nn.pool.connect import FilterEdges
@@ -8,7 +10,6 @@ from torch_geometric.nn.pool.select import SelectOutput
 from torch_geometric.nn.resolver import activation_resolver
 
 from ..functional import topk
-from .pooling_output import PoolingOutput
 
 
 class SparsePooling(torch.nn.Module):
@@ -30,12 +31,12 @@ class SparsePooling(torch.nn.Module):
     def forward(
         self,
         x: Tensor,
-        edge_index: Tensor,
+        adj: Tensor,
         batch: Optional[Tensor] = None,
         edge_weight: Optional[Tensor] = None,
     ) -> PoolingOutput:
         if batch is None:
-            batch = edge_index.new_zeros(x.size(0))
+            batch = adj.new_zeros(x.size(0))
 
         selection = self.select(x, batch)
         scores = selection.weight
@@ -45,7 +46,7 @@ class SparsePooling(torch.nn.Module):
         pooled_x = x[perm] * scores.unsqueeze(-1)
         connected = self.connect(
             selection,
-            edge_index,
+            adj,
             edge_weight,
             batch,
         )
@@ -55,8 +56,11 @@ class SparsePooling(torch.nn.Module):
             edge_index=connected.edge_index,
             batch=connected.batch,
             edge_weight=connected.edge_attr,
-            perm=perm,
-            score=scores,
+            so=TGPSelectOutput(
+                node_index=perm, num_nodes=x.size(0),
+                cluster_index=selection.cluster_index, num_supernodes=perm.numel(),
+                weight=scores,
+            ),
         )
 
 

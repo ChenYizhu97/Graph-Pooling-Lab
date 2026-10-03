@@ -1,4 +1,5 @@
 import torch
+from tgp.src import PoolingOutput
 from torch import Tensor
 from torch_geometric.nn.dense import dense_diff_pool, dense_mincut_pool
 from torch_geometric.utils import to_dense_adj, to_dense_batch
@@ -6,7 +7,6 @@ from torch_geometric.utils import to_dense_adj, to_dense_batch
 from gplab.data.sparse import to_sparse_batch
 
 from ..functional import dense_connect
-from .pooling_output import PoolingOutput
 
 
 class DensePoolAdapter(torch.nn.Module):
@@ -20,12 +20,12 @@ class DensePoolAdapter(torch.nn.Module):
     def forward(
         self,
         x: Tensor,
-        edge_index: Tensor,
+        adj: Tensor,
         batch: Tensor,
         edge_weight: Tensor | None = None,
     ) -> PoolingOutput:
         dense_x, mask = to_dense_batch(x, batch=batch)
-        adj = to_dense_adj(edge_index, batch, edge_attr=edge_weight)
+        adj = to_dense_adj(adj, batch, edge_attr=edge_weight)
         assignment = (
             self.assignment_layer(dense_x, adj, mask)
             if self.pool_method == "diffpool"
@@ -39,7 +39,7 @@ class DensePoolAdapter(torch.nn.Module):
                 assignment,
                 mask,
             )
-            aux_loss = 0.5 * mincut_loss + ortho_loss
+            loss = {"mincut": 0.5 * mincut_loss, "orthogonality": ortho_loss}
         elif self.pool_method == "diffpool":
             pooled_x, pooled_adj, link_loss, ent_loss = dense_diff_pool(
                 dense_x,
@@ -47,10 +47,10 @@ class DensePoolAdapter(torch.nn.Module):
                 assignment,
                 mask,
             )
-            aux_loss = 0.1 * link_loss + 0.1 * ent_loss
+            loss = {"link": 0.1 * link_loss, "entropy": 0.1 * ent_loss}
         elif self.pool_method == "densepool":
             pooled_x, pooled_adj = dense_connect(dense_x, adj, assignment, mask)
-            aux_loss = None
+            loss = None
         else:
             raise ValueError(f"Unsupported dense pooling method '{self.pool_method}'.")
 
@@ -64,7 +64,7 @@ class DensePoolAdapter(torch.nn.Module):
             edge_index=sparse_edge_index,
             batch=sparse_batch,
             edge_weight=sparse_edge_weight,
-            aux_loss=aux_loss,
+            loss=loss,
         )
 
     def reset_parameters(self) -> None:

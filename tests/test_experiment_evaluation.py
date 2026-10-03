@@ -4,29 +4,28 @@ from dataclasses import replace
 from unittest.mock import patch
 
 import torch
+from tgp.src import PoolingOutput
 from torch_geometric.data import Data, InMemoryDataset
 
-from gplab.benchmark.case import BenchmarkCase
+from gplab.benchmark.config import ExperimentConfig
 from gplab.benchmark.execution import ExecutionOptions
-from gplab.benchmark.plan import RunPlan, SplitIndices
-from gplab.benchmark.request import BenchmarkRequest
+from gplab.benchmark.runs import RunSpec, SplitIndices, resolve_runs
 from gplab.experiment.execute import (
-    _execute_single_run,
+    execute_run,
     run_experiment,
 )
-from gplab.experiment.identity import attach_record_id
 from gplab.experiment.measurements import capture_structural_statistics, count_trainable_parameters
 from gplab.experiment.query import QuerySpec, build_benchmark_report, build_query_result
 from gplab.experiment.record import build_record, build_result
 from gplab.graph import ConnectivityType
-from gplab.layers.pool.pooling_output import PoolingOutput
+from gplab.jobs.job import ExperimentJob
 from gplab.layers.pool.profiles import POOLING_PROFILES, PoolingProfile, PoolingSignature
 from gplab.model import GraphClassifier
 from gplab.train_loop import EvaluationResult
 
 
-def _case() -> BenchmarkCase:
-    return BenchmarkCase.from_mapping({
+def _config() -> ExperimentConfig:
+    return ExperimentConfig.from_mapping({
         "dataset": "MUTAG",
         "pool": {"name": "nopool", "ratio": 0.5, "nonlinearity": "tanh"},
         "model": {
@@ -75,7 +74,7 @@ class _FixedPool(torch.nn.Module):
         super().__init__()
         self.projection = torch.nn.Linear(2, 1)
 
-    def forward(self, *, x, edge_index, batch, edge_weight=None):
+    def forward(self, *, x, adj, batch, edge_weight=None):
         selected = torch.tensor([0, 1, 3], device=x.device)
         return PoolingOutput(
             x=x[selected],
@@ -94,7 +93,7 @@ class _PooledModel(torch.nn.Module):
     def forward(self, data):
         return self.pool_module(
             x=data.x,
-            edge_index=data.edge_index,
+            adj=data.edge_index,
             batch=data.batch,
             edge_weight=getattr(data, "edge_weight", None),
         )
@@ -108,10 +107,10 @@ class _LazyPool(torch.nn.Module):
     def reset_parameters(self) -> None:
         self.linear.reset_parameters()
 
-    def forward(self, *, x, edge_index, batch, edge_weight=None):
+    def forward(self, *, x, adj, batch, edge_weight=None):
         return PoolingOutput(
             x=self.linear(x),
-            edge_index=edge_index,
+            edge_index=adj,
             batch=batch,
             edge_weight=edge_weight,
         )
@@ -141,19 +140,19 @@ class ExperimentEvaluationTests(unittest.TestCase):
             patch("gplab.experiment.execute.load_dataset", return_value=dataset),
             patch("gplab.experiment.execute.torch.cuda.is_available", return_value=False),
         ):
-            case = _case()
-            case = replace(
-                case,
-                pool=replace(case.pool, name="lazy_test_pool"),
+            experiment = _config()
+            experiment = replace(
+                experiment,
+                pool=replace(experiment.pool, name="lazy_test_pool"),
                 training=replace(
-                    case.training,
+                    experiment.training,
                     epochs=1,
                     runs=2,
-                    seeds=replace(case.training.seeds, values=(1, 2)),
+                    seeds=replace(experiment.training.seeds, values=(1, 2)),
                 ),
             )
             record = run_experiment(
-                BenchmarkRequest(case=case, execution=ExecutionOptions()),
+                experiment, ExecutionOptions(),
                 emit_text=False,
             )
 
@@ -163,7 +162,7 @@ class ExperimentEvaluationTests(unittest.TestCase):
 
     def test_restores_validation_checkpoint_then_evaluates_test_once(self):
         model = _SelectionModel()
-        training = replace(_case().training, epochs=3, patience=0)
+        training = replace(_config().training, epochs=3, patience=0)
         test_batch = Data(
             x=torch.ones(5, 2),
             edge_index=torch.tensor([[0, 1, 1, 3], [1, 0, 2, 4]]),
@@ -207,12 +206,11 @@ class ExperimentEvaluationTests(unittest.TestCase):
             patch("gplab.experiment.execute.evaluate_epoch", side_effect=evaluate),
             patch("gplab.experiment.execute.time.perf_counter", side_effect=[10.0, 12.5]),
         ):
-            run = _execute_single_run(
+            run = execute_run(
                 model,
                 dataset=[0, 1, 2, 3],
                 run_idx=1,
-                run_seed=7,
-                run_split=SplitIndices(train=(0,), val=(1,), test=(2, 3)),
+                run=RunSpec(7, SplitIndices(train=(0,), val=(1,), test=(2, 3))),
                 train=training,
                 device=torch.device("cpu"),
                 show_progress=False,
@@ -293,7 +291,7 @@ class ExperimentEvaluationTests(unittest.TestCase):
                     batch=torch.zeros(4, dtype=torch.long),
                 )
                 model = GraphClassifier(
-                    2, 2, _case().model, pool_method=pool_name, ratio=0.5, avg_node_num=4,
+                    2, 2, _config().model, pool_method=pool_name, ratio=0.5, avg_node_num=4,
                 ).eval()
                 with torch.no_grad(), capture_structural_statistics(model) as statistics:
                     model(graph)
@@ -318,7 +316,7 @@ class ExperimentEvaluationTests(unittest.TestCase):
                 model = GraphClassifier(
                     n_node_features=2,
                     n_classes=2,
-                    config=_case().model,
+                    config=_config().model,
                     pool_method=pool_name,
                     ratio=0.5,
                     avg_node_num=4,
@@ -377,41 +375,33 @@ class ExperimentEvaluationTests(unittest.TestCase):
             for value in result["runs"][0]["structural_stats"].values()
         ))
 
-        case = _case()
-        case = replace(
-            case,
-            training=replace(case.training, runs=2, seeds=replace(case.training.seeds, values=(7, 8))),
+        experiment = _config()
+        experiment = replace(
+            experiment,
+            training=replace(experiment.training, runs=2, seeds=replace(experiment.training.seeds, values=(7, 8))),
         )
         record = build_record(
-            case,
+            experiment,
             execution=ExecutionOptions(),
-            run_plan=RunPlan.build(case, dataset_size=8),
-            runtime={},
-            run_records=[run, second_run],
-            trainable_parameters=counts,
+            environment={},
+            result=build_result(
+                [{**result, **spec.to_mapping()} for result, spec in
+                 zip((run, second_run), resolve_runs(experiment.training, 8), strict=True)],
+                trainable_parameters=counts,
+            ),
         )
-        for historical in (False, True):
-            with self.subTest(historical=historical):
-                source = copy.deepcopy(record)
-                if historical:
-                    for entry in source["result"]["runs"]:
-                        entry["best_test_acc"] = entry.pop("test_acc")
-                        entry["peak_cuda_allocated_bytes"] = entry.pop("peak_training_cuda_allocated_bytes")
-                    attach_record_id(source)
-                original = copy.deepcopy(source)
-                spec = QuerySpec(log_file="unused.jsonl")
-                query = build_query_result([source], spec)
-                report = build_benchmark_report([source], spec)
-                for summary in (query["summaries"][0], report["groups"][0]["summaries"][0]):
-                    self.assertEqual(summary["mean"], 0.5)
-                    self.assertEqual(summary["std"], 0.25)
-                    self.assertEqual(summary["max_test_acc"], 0.75)
-                    self.assertEqual(summary["min_test_acc"], 0.25)
-                    self.assertNotIn("best_test_acc", summary)
-                    self.assertNotIn("worst_test_acc", summary)
-                replay = BenchmarkRequest.from_record_for_replay(source)
-                self.assertEqual(replay.case.training.seeds.values, (7, 8))
-                self.assertEqual(source, original)
+        original = copy.deepcopy(record)
+        spec = QuerySpec(log_file="unused.jsonl")
+        query = build_query_result([record], spec)
+        report = build_benchmark_report([record], spec)
+        for summary in (query["summaries"][0], report["groups"][0]["summaries"][0]):
+            self.assertEqual(summary["mean"], 0.5)
+            self.assertEqual(summary["std"], 0.25)
+            self.assertEqual(summary["max_test_acc"], 0.75)
+            self.assertEqual(summary["min_test_acc"], 0.25)
+        replay = ExperimentJob.from_record(record)
+        self.assertEqual(replay.experiment, experiment)
+        self.assertEqual(record, original)
 
     def test_cuda_peak_memory_excludes_checkpoint_restoration_and_test(self):
         model = _SelectionModel()
@@ -490,13 +480,12 @@ class ExperimentEvaluationTests(unittest.TestCase):
                 side_effect=read_memory_peak,
             ) as max_allocated,
         ):
-            run = _execute_single_run(
+            run = execute_run(
                 model,
                 dataset=[0, 1, 2],
                 run_idx=1,
-                run_seed=7,
-                run_split=SplitIndices(train=(0,), val=(1,), test=(2,)),
-                train=replace(_case().training, epochs=1),
+                run=RunSpec(7, SplitIndices(train=(0,), val=(1,), test=(2,))),
+                train=replace(_config().training, epochs=1),
                 device=torch.device("cuda:0"),
                 show_progress=False,
             )

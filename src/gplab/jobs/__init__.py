@@ -4,7 +4,7 @@ from .defaults import (
     AUTOMATION_TRAINING_DEFAULTS,
 )
 from .io import load_job_file, load_job_text
-from .request import request_from_job
+from .parse import parse_job
 
 __all__ = [
     "AUTOMATION_MODEL_DEFAULTS",
@@ -12,5 +12,5 @@ __all__ = [
     "AUTOMATION_EXECUTION_DEFAULTS",
     "load_job_file",
     "load_job_text",
-    "request_from_job",
+    "parse_job",
 ]

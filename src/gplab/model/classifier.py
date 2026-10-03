@@ -2,18 +2,19 @@ from typing import Optional
 
 import torch
 import torch.nn.functional as F
+from tgp.src import PoolingOutput
 from torch import Tensor
 from torch.utils.checkpoint import checkpoint
 from torch_geometric.data import Data
 from torch_geometric.nn import MLP, BatchNorm, LayerNorm
 from torch_geometric.nn.resolver import activation_resolver
 
-from gplab.benchmark.case import ModelConfig
+from gplab.benchmark.config import ModelConfig
 from gplab.graph import ConnectivityType
 from gplab.layers.conv.profiles import CONV_PROFILES
 from gplab.layers.functional import readout
-from gplab.layers.pool.pooling_output import PoolingOutput, validate_pooling_output
 from gplab.layers.pool.profiles import load_pooling_profile
+from gplab.layers.pool.validation import validate_pooling_output
 
 
 class GraphClassifier(torch.nn.Module):
@@ -124,7 +125,10 @@ class GraphClassifier(torch.nn.Module):
         if before_pool is not None:
             graph_embedding = before_pool + graph_embedding
         logits = self.post_gnn(graph_embedding)
-        return F.log_softmax(logits, dim=1), pool_output.aux_loss
+        # Poolers provide named, already-weighted terms; keep their gradients
+        # when aggregating losses, including during checkpoint recomputation.
+        auxiliary_loss = sum(pool_output.loss.values()) if pool_output.loss else None
+        return F.log_softmax(logits, dim=1), auxiliary_loss
 
     def reset_parameters(self) -> None:
         self.pre_gnn.reset_parameters()
@@ -158,7 +162,7 @@ class GraphClassifier(torch.nn.Module):
                 batch=batch,
                 edge_weight=edge_weight,
             )
-        output = self.pool_module(x=x, edge_index=edge_index, batch=batch, edge_weight=edge_weight)
+        output = self.pool_module(x=x, adj=edge_index, batch=batch, edge_weight=edge_weight)
         if not self._pool_validated:
             validate_pooling_output(output, self.pool_module.__class__.__name__)
             self._pool_validated = True

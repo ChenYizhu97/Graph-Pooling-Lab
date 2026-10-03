@@ -31,7 +31,7 @@ class QuerySpec:
     model_variant: Optional[str] = None
     tag: Optional[str] = None
     sort_by: str = "mean"
-    show_case: bool = False
+    show_experiment: bool = False
     show_replay: bool = False
 
     def filters(self) -> dict:
@@ -75,14 +75,14 @@ def select_records(records: list[dict], spec: QuerySpec) -> list[dict]:
     validate_query_spec(spec)
     selected = []
     for record in records:
-        case = record["case"]
-        if spec.dataset is not None and case["dataset"].lower() != spec.dataset.lower():
+        experiment = record["experiment"]
+        if spec.dataset is not None and experiment["dataset"].lower() != spec.dataset.lower():
             continue
-        if spec.pool is not None and case["pool"]["name"] != spec.pool:
+        if spec.pool is not None and experiment["pool"]["name"] != spec.pool:
             continue
-        if spec.tag is not None and record["execution"].get("tag") != spec.tag:
+        if spec.tag is not None and record["tag"] != spec.tag:
             continue
-        if spec.model_variant is not None and case["model"]["variant"] != spec.model_variant:
+        if spec.model_variant is not None and experiment["model"]["variant"] != spec.model_variant:
             continue
         selected.append(record)
     return selected
@@ -101,8 +101,8 @@ def _context(spec: QuerySpec, *, total_records: int, matched_records: int) -> di
 
 def _summary_for_query(record: dict, spec: QuerySpec) -> dict:
     summary = summarize_record(record)
-    if spec.show_case:
-        summary["case"] = record["case"]
+    if spec.show_experiment:
+        summary["experiment"] = record["experiment"]
     if spec.show_replay:
         summary["replay_command"] = (
             f"gplab-replay --log-file {shlex.quote(spec.log_file)} --record-id {record['record_id']}"

@@ -1,3 +1,4 @@
+"""Describe the active software and device environment; this module does not configure it."""
 import os
 import platform
 import sys
@@ -7,12 +8,12 @@ import torch
 import torch_geometric
 from rich import print as rprint
 
-from gplab.benchmark.case import BenchmarkCase
+from gplab.benchmark.config import ExperimentConfig
 from gplab.benchmark.execution import ExecutionOptions
 
 
 def print_experiment_info(
-        case: BenchmarkCase,
+        experiment: ExperimentConfig,
         execution: ExecutionOptions,
         device: torch.device,
         file=sys.stderr
@@ -25,7 +26,7 @@ def print_experiment_info(
     message = "\n".join(
         [
             console_separator("="),
-            f"Benchmark case:\n{case.to_mapping()}",
+            f"Benchmark experiment:\n{experiment.to_mapping()}",
             console_separator("-"),
             f"Execution options:\n{execution.to_mapping()}",
             console_separator("-"),
@@ -37,7 +38,8 @@ def print_experiment_info(
     rprint(message, file=file)
 
 
-def build_runtime_meta(device: torch.device) -> dict:
+def collect_environment_info(device: torch.device) -> dict:
+    """Snapshot versions and effective backend settings after execution setup."""
     return {
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "python_version": sys.version.split()[0],

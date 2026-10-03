@@ -42,7 +42,7 @@ def inspect_pool(pool_name: str, ratio: float = 0.8) -> None:
     pool_module.eval()
 
     with torch.no_grad():
-        pool_output = pool_module(x=x, edge_index=edge_index, batch=batch)
+        pool_output = pool_module(x=x, adj=edge_index, batch=batch)
 
     per_graph_clusters = torch.bincount(pool_output.batch, minlength=2)
     print(f"[{pool_name}]")

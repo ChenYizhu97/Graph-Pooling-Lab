@@ -3,26 +3,26 @@ import unittest
 from unittest.mock import patch
 
 import torch
+from tgp.src import PoolingOutput
 from torch.utils.checkpoint import checkpoint as torch_checkpoint
 from torch_geometric.data import Data
 
-from gplab.benchmark.case import BenchmarkCase
 from gplab.benchmark.compatibility import (
     compatible_pools,
     resolve_dataset_connectivity_type,
     validate_pool_compatibility,
 )
+from gplab.benchmark.config import ExperimentConfig
 from gplab.benchmark.execution import ExecutionOptions
-from gplab.benchmark.plan import RunPlan
-from gplab.benchmark.request import BenchmarkRequest
+from gplab.benchmark.runs import resolve_runs
 from gplab.data.profiles import DATASET_PROFILES
-from gplab.experiment.execute import prepare_run
+from gplab.experiment.execute import prepare_experiment
 from gplab.graph import ConnectivityType
+from gplab.jobs.job import ExperimentJob
 from gplab.jobs.schema import JobSchemaError, normalize_job_shape
 from gplab.layers.conv.profiles import CONV_PROFILES
 from gplab.layers.functional import readout as graph_readout
 from gplab.layers.pool.dense_pool_adapter import DensePoolAdapter
-from gplab.layers.pool.pooling_output import PoolingOutput
 from gplab.layers.pool.profiles import (
     POOLING_PROFILES,
     PoolingSignature,
@@ -45,18 +45,18 @@ class _RecordingPool(torch.nn.Module):
     def reset_parameters(self):
         pass
 
-    def forward(self, *, x, edge_index, batch, edge_weight=None):
+    def forward(self, *, x, adj, batch, edge_weight=None):
         self.seen_edge_weight = edge_weight
         return PoolingOutput(
             x=x,
-            edge_index=edge_index,
+            edge_index=adj,
             batch=batch,
             edge_weight=edge_weight,
         )
 
 
-def _case(pool="nopool", pre_conv="GCN", post_conv="GCN", variant="plain"):
-    return BenchmarkCase.from_mapping({
+def _config(pool="nopool", pre_conv="GCN", post_conv="GCN", variant="plain"):
+    return ExperimentConfig.from_mapping({
         "dataset": "MUTAG",
         "pool": {"name": pool, "ratio": 0.5, "nonlinearity": "tanh"},
         "model": {
@@ -148,13 +148,13 @@ class CompatibilityTests(unittest.TestCase):
             ),
             batch=torch.zeros(4, dtype=torch.long),
         )
-        output = pool(**graph.to_dict())
+        output = pool(x=graph.x, adj=graph.edge_index, batch=graph.batch)
         self.assertIsInstance(output, PoolingOutput)
 
         model = GraphClassifier(
             2,
             2,
-            _case(profile_name).model,
+            _config(profile_name).model,
             pool_method=profile_name,
             ratio=0.5,
             avg_node_num=4,
@@ -187,7 +187,7 @@ class CompatibilityTests(unittest.TestCase):
         )
         output = pool(
             x=torch.randn(4, 2),
-            edge_index=torch.tensor(
+            adj=torch.tensor(
                 [[0, 1, 1, 2, 2, 3, 3, 0], [1, 0, 2, 1, 3, 2, 0, 3]]
             ),
             batch=torch.zeros(4, dtype=torch.long),
@@ -206,9 +206,9 @@ class CompatibilityTests(unittest.TestCase):
         self.assertNotIn("pool_ratio", parameters)
 
     def test_legacy_conv_layer_is_rejected(self):
-        with self.assertRaisesRegex(JobSchemaError, "Unknown case.model field"):
+        with self.assertRaisesRegex(JobSchemaError, "Unknown experiment.model field"):
             normalize_job_shape({
-                "case": {
+                "experiment": {
                     "dataset": "MUTAG",
                     "pool": {"name": "nopool", "ratio": 0.5},
                     "model": {"conv_layer": "GraphConv"},
@@ -245,7 +245,7 @@ class CompatibilityTests(unittest.TestCase):
         model = GraphClassifier(
             2,
             2,
-            _case(pre_conv="GIN", post_conv="GCN").model,
+            _config(pre_conv="GIN", post_conv="GCN").model,
             pool_method="nopool",
             ratio=0.5,
             avg_node_num=3,
@@ -295,7 +295,7 @@ class CompatibilityTests(unittest.TestCase):
                 model = GraphClassifier(
                     2,
                     2,
-                    _case(pre_conv=conv_name, post_conv=conv_name).model,
+                    _config(pre_conv=conv_name, post_conv=conv_name).model,
                     pool_method="nopool",
                     ratio=0.5,
                     avg_node_num=3,
@@ -347,7 +347,7 @@ class CompatibilityTests(unittest.TestCase):
 
     def test_scalar_pool_output_reaches_post_convolution(self):
         model = GraphClassifier(
-            2, 2, _case("diffpool").model, pool_method="diffpool", ratio=0.5, avg_node_num=3,
+            2, 2, _config("diffpool").model, pool_method="diffpool", ratio=0.5, avg_node_num=3,
         )
         seen = {}
         def observe(_module, _args, kwargs, _output):
@@ -372,7 +372,7 @@ class CompatibilityTests(unittest.TestCase):
         model = GraphClassifier(
             2,
             2,
-            _case().model,
+            _config().model,
             pool_method="nopool",
             ratio=0.5,
             avg_node_num=3,
@@ -413,7 +413,7 @@ class CompatibilityTests(unittest.TestCase):
                 model = GraphClassifier(
                     2,
                     2,
-                    _case(variant=variant).model,
+                    _config(variant=variant).model,
                     pool_method="nopool",
                     ratio=0.5,
                     avg_node_num=4,
@@ -437,7 +437,7 @@ class CompatibilityTests(unittest.TestCase):
         regular_model = GraphClassifier(
             2,
             2,
-            _case().model,
+            _config().model,
             pool_method="nopool",
             ratio=0.5,
             avg_node_num=4,
@@ -449,7 +449,7 @@ class CompatibilityTests(unittest.TestCase):
         checkpointed_model = GraphClassifier(
             2,
             2,
-            _case().model,
+            _config().model,
             pool_method="nopool",
             ratio=0.5,
             avg_node_num=4,
@@ -471,7 +471,7 @@ class CompatibilityTests(unittest.TestCase):
         model = GraphClassifier(
             2,
             2,
-            _case("diffpool").model,
+            _config("diffpool").model,
             pool_method="diffpool",
             ratio=0.5,
             avg_node_num=4,
@@ -498,24 +498,24 @@ class CompatibilityTests(unittest.TestCase):
         self.assertEqual(output.edge_weight.numel(), output.edge_index.size(1))
 
     def test_replay_uses_recorded_splits(self):
-        case = _case()
+        experiment = _config()
         record = {
-            "case": case.to_mapping(), "execution": ExecutionOptions(None, None, False).to_mapping(),
-            "run_plan": {"case_id": "source", "seeds": [1],
-                         "splits": [{"train": [2, 3], "val": [1], "test": [0]}]},
+            "experiment": experiment.to_mapping(), "execution": ExecutionOptions().to_mapping(),
+            "record_id": "source", "tag": None,
+            "result": {"runs": [{"seed": 1, "split": {"train": [2, 3], "val": [1], "test": [0]}}]},
         }
-        request = BenchmarkRequest.from_record_for_replay(record)
+        request = ExperimentJob.from_record(record)
         dataset = _Dataset([
             Data(x=torch.ones(2, 2), edge_index=torch.tensor([[0], [1]])) for _ in range(4)
         ])
         with patch("gplab.experiment.execute.load_dataset", return_value=dataset):
-            prepared = prepare_run(request, torch.device("cpu"), {})
-        self.assertEqual(prepared.run_plan.splits[0].train, (2, 3))
+            prepared = prepare_experiment(request.experiment, request.fixed_runs)
+        self.assertEqual(prepared.runs[0].split.train, (2, 3))
 
-    def test_comparison_cases_reuse_concrete_splits(self):
-        topk_plan = RunPlan.build(_case("topkpool"), dataset_size=12)
-        sag_plan = RunPlan.build(_case("sagpool"), dataset_size=12)
-        self.assertEqual(topk_plan.splits, sag_plan.splits)
+    def test_comparison_experiments_reuse_concrete_splits(self):
+        topk_plan = resolve_runs(_config("topkpool").training, dataset_size=12)
+        sag_plan = resolve_runs(_config("sagpool").training, dataset_size=12)
+        self.assertEqual(topk_plan, sag_plan)
 
 
 if __name__ == "__main__":

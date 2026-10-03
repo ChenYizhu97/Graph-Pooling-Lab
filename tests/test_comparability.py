@@ -7,9 +7,9 @@ import torch
 from torch_geometric.data import Data, InMemoryDataset
 from torch_geometric.loader import DataLoader
 
-from gplab.benchmark.case import ModelConfig
 from gplab.benchmark.comparability import ComparisonSetting, check_comparability
 from gplab.benchmark.compatibility import pool_compatibility_error, validate_pool_compatibility
+from gplab.benchmark.config import ModelConfig
 from gplab.data.profiles import DatasetProfile
 from gplab.graph import ConnectivityType
 from gplab.layers.conv.profiles import CONV_PROFILES, ConvProfile

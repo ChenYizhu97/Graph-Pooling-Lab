@@ -1,21 +1,9 @@
-"""Pooling output value and boundary validation."""
-from dataclasses import dataclass
+"""Validate the sparse TGP output consumed by GPLab's graph classifier."""
 from typing import Optional
 
 import torch
+from tgp.src import PoolingOutput
 from torch import Tensor
-
-
-@dataclass
-class PoolingOutput:
-    """Pooled graph plus optional selected-node indices, gates, and training auxiliary loss."""
-    x: Tensor
-    edge_index: Tensor
-    batch: Tensor
-    edge_weight: Optional[Tensor] = None
-    perm: Optional[Tensor] = None
-    score: Optional[Tensor] = None
-    aux_loss: Optional[Tensor] = None
 
 
 def _require_tensor(value, field: str, pool_name: str) -> Tensor:
@@ -65,17 +53,16 @@ def validate_pooling_output(output, pool_name: str) -> None:
     if edge_index.device != device or batch.device != device:
         raise RuntimeError(f"Pooling '{pool_name}': required tensors must share one device.")
 
-    for field in ("edge_weight", "perm", "score", "aux_loss"):
-        _validate_optional_tensor(getattr(output, field), field, pool_name, device)
+    _validate_optional_tensor(output.edge_weight, "edge_weight", pool_name, device)
 
     edge_count = edge_index.size(1)
     if output.edge_weight is not None:
         if output.edge_weight.dim() != 1 or output.edge_weight.size(0) != edge_count:
             raise ValueError(f"Pooling '{pool_name}': edge_weight must have shape [E].")
-    if output.perm is not None and output.perm.dim() != 1:
-        raise ValueError(f"Pooling '{pool_name}': perm must be one-dimensional.")
-    if output.score is not None:
-        if output.score.dim() != 1 or output.score.size(0) != x.size(0):
-            raise ValueError(f"Pooling '{pool_name}': score must have shape [N].")
-    if output.aux_loss is not None and output.aux_loss.numel() != 1:
-        raise ValueError(f"Pooling '{pool_name}': aux_loss must be scalar.")
+    if output.loss is not None:
+        if not isinstance(output.loss, dict):
+            raise TypeError(f"Pooling '{pool_name}': loss must be a dictionary of weighted scalar tensors.")
+        for name, value in output.loss.items():
+            loss = _require_tensor(value, f"loss[{name!r}]", pool_name)
+            if loss.numel() != 1 or loss.device != device:
+                raise ValueError(f"Pooling '{pool_name}': loss[{name!r}] must be scalar and on {device}.")

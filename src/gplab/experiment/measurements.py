@@ -116,12 +116,12 @@ def capture_structural_statistics(model):
         def observe_pool(_module, args, kwargs, output):
             statistics.observe(
                 input_x=_argument(args, kwargs, "x", 0),
-                input_edge_index=_argument(args, kwargs, "edge_index", 1),
-                input_batch=_argument(args, kwargs, "batch", 2),
+                input_edge_index=kwargs["adj"],
+                input_batch=kwargs["batch"],
                 output_x=output.x,
                 output_edge_index=output.edge_index,
                 output_batch=output.batch,
-                input_edge_weight=_argument(args, kwargs, "edge_weight", 3),
+                input_edge_weight=kwargs.get("edge_weight"),
                 output_edge_weight=output.edge_weight,
             )
 

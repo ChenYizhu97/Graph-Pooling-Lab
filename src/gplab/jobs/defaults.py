@@ -28,7 +28,5 @@ AUTOMATION_TRAINING_DEFAULTS = {
 }
 
 AUTOMATION_EXECUTION_DEFAULTS = {
-    "log_file": None,
-    "tag": None,
     "activation_checkpoint": False,
 }
