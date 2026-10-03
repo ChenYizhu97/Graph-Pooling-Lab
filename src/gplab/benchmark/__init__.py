@@ -8,14 +8,12 @@ from .config import (
     SplitConfig,
     TrainingConfig,
 )
-from .execution import ExecutionOptions
-from .identity import compute_experiment_id, compute_record_benchmark_key
+from .identity import compute_comparison_group_key
 from .runs import RunSpec, SplitIndices, resolve_runs
 from .seeds import resolve_seeds
 
 __all__ = [
     "ExperimentConfig",
-    "ExecutionOptions",
     "ModelConfig",
     "PoolConfig",
     "SeedPolicy",
@@ -23,8 +21,7 @@ __all__ = [
     "SplitIndices",
     "SplitConfig",
     "TrainingConfig",
-    "compute_experiment_id",
-    "compute_record_benchmark_key",
+    "compute_comparison_group_key",
     "ComparabilityResult",
     "ComparisonSetting",
     "check_comparability",

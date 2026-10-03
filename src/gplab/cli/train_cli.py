@@ -99,7 +99,6 @@ def main(
             job = build_cli_job(
                 model_config=model_config_data,
                 training_config=experiment_config_data,
-                execution_config=experiment_config_data,
                 pool=pool,
                 pool_ratio=pool_ratio,
                 pool_nonlinearity=pool_nonlinearity,
@@ -121,7 +120,6 @@ def main(
                 emit_text=output_format == "text",
                 context={
                     "source": "cli_options",
-                    "experiment_id": job.experiment_id,
                     "model_config": model_config,
                     "experiment_config": experiment_config,
                 },

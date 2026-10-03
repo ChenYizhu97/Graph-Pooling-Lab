@@ -1,5 +1,7 @@
 import copy
+import io
 import unittest
+from contextlib import redirect_stderr
 from dataclasses import replace
 from unittest.mock import patch
 
@@ -8,7 +10,6 @@ from tgp.src import PoolingOutput
 from torch_geometric.data import Data, InMemoryDataset
 
 from gplab.benchmark.config import ExperimentConfig
-from gplab.benchmark.execution import ExecutionOptions
 from gplab.benchmark.runs import RunSpec, SplitIndices, resolve_runs
 from gplab.experiment.execute import (
     execute_run,
@@ -39,6 +40,7 @@ def _config() -> ExperimentConfig:
             "variant": "plain",
         },
         "training": {
+            "activation_checkpoint": False,
             "runs": 1,
             "lr": 0.001,
             "batch_size": 2,
@@ -117,7 +119,7 @@ class _LazyPool(torch.nn.Module):
 
 
 class ExperimentEvaluationTests(unittest.TestCase):
-    def test_run_experiment_counts_lazy_pool_parameters_after_training(self):
+    def test_progress_does_not_execute_model_or_change_lazy_pool_results(self):
         dataset = InMemoryDataset()
         dataset.data, dataset.slices = dataset.collate([
             Data(
@@ -151,11 +153,21 @@ class ExperimentEvaluationTests(unittest.TestCase):
                     seeds=replace(experiment.training.seeds, values=(1, 2)),
                 ),
             )
-            record = run_experiment(
-                experiment, ExecutionOptions(),
-                emit_text=False,
-            )
+            results, forward_counts = [], []
+            for emit_text in (False, True):
+                with redirect_stderr(io.StringIO()), patch.object(
+                    _LazyPool, "forward", autospec=True, side_effect=_LazyPool.forward,
+                ) as forward:
+                    record = run_experiment(experiment, emit_text=emit_text)
+                    forward_counts.append(forward.call_count)
+                result = copy.deepcopy(record["result"])
+                for run in result["runs"]:
+                    del run["training_wall_time_seconds"]
+                results.append(result)
 
+        self.assertGreater(forward_counts[0], 0)
+        self.assertEqual(forward_counts[0], forward_counts[1])
+        self.assertEqual(results[0], results[1])
         self.assertEqual(record["result"]["trainable_parameters"]["pooling_module"], 20)
         self.assertGreater(record["result"]["trainable_parameters"]["total"], 20)
         self.assertEqual(len(record["result"]["runs"]), 2)
@@ -209,11 +221,9 @@ class ExperimentEvaluationTests(unittest.TestCase):
             run = execute_run(
                 model,
                 dataset=[0, 1, 2, 3],
-                run_idx=1,
                 run=RunSpec(7, SplitIndices(train=(0,), val=(1,), test=(2, 3))),
                 train=training,
                 device=torch.device("cpu"),
-                show_progress=False,
             )
 
         self.assertEqual(evaluated_loaders, ["val", "val", "val", "test"])
@@ -382,7 +392,6 @@ class ExperimentEvaluationTests(unittest.TestCase):
         )
         record = build_record(
             experiment,
-            execution=ExecutionOptions(),
             environment={},
             result=build_result(
                 [{**result, **spec.to_mapping()} for result, spec in
@@ -483,11 +492,9 @@ class ExperimentEvaluationTests(unittest.TestCase):
             run = execute_run(
                 model,
                 dataset=[0, 1, 2],
-                run_idx=1,
                 run=RunSpec(7, SplitIndices(train=(0,), val=(1,), test=(2,))),
                 train=replace(_config().training, epochs=1),
                 device=torch.device("cuda:0"),
-                show_progress=False,
             )
 
         self.assertEqual(run["peak_training_cuda_allocated_bytes"], 8192)

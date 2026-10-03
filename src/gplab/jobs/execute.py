@@ -13,10 +13,10 @@ def execute_job(
 ) -> dict:
     """Train, finalize the record, optionally save it, and build the CLI response."""
     measurements = run_experiment(
-        job.experiment, job.execution, fixed_runs=job.fixed_runs, emit_text=emit_text,
+        job.experiment, fixed_runs=job.fixed_runs, emit_text=emit_text,
     )
     record = build_record(
-        job.experiment, execution=job.execution, **measurements,
+        job.experiment, **measurements,
         tag=job.tag, source_record_id=job.source_record_id,
     )
     if job.log_file is not None:

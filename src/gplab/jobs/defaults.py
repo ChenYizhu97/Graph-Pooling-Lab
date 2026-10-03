@@ -15,6 +15,7 @@ AUTOMATION_TRAINING_DEFAULTS = {
     "batch_size": 32,
     "patience": 50,
     "epochs": 500,
+    "activation_checkpoint": False,
     "split": {
         "train": 0.8,
         "val": 0.1,
@@ -25,8 +26,4 @@ AUTOMATION_TRAINING_DEFAULTS = {
         "values": None,
         "allow_duplicates": False,
     },
-}
-
-AUTOMATION_EXECUTION_DEFAULTS = {
-    "activation_checkpoint": False,
 }

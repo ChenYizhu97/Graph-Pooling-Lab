@@ -127,14 +127,14 @@ def _sort_summaries(summaries: list[dict], sort_by: str) -> list[dict]:
 
 
 def build_benchmark_report(records: list[dict], spec: QuerySpec) -> dict:
-    """Rank summaries within protocol-compatible groups using benchmark-derived keys."""
+    """Rank matching experiment settings; grouping does not check graph comparability."""
     selected = select_records(records, spec)
-    by_benchmark: dict[str, list[dict]] = {}
+    by_comparison_group: dict[str, list[dict]] = {}
     for record in selected:
         summary = _summary_for_query(record, spec)
-        by_benchmark.setdefault(summary["benchmark_key"], []).append(summary)
+        by_comparison_group.setdefault(summary["comparison_group_key"], []).append(summary)
     groups = []
-    for benchmark_key, summaries in by_benchmark.items():
+    for comparison_group_key, summaries in by_comparison_group.items():
         ranked = _sort_summaries(summaries, spec.sort_by)
         first = ranked[0]
         tags = sorted({summary["tag"] for summary in ranked if summary.get("tag") is not None})
@@ -142,7 +142,7 @@ def build_benchmark_report(records: list[dict], spec: QuerySpec) -> dict:
             summary["rank"] = index
 
         group = {
-            "benchmark_key": benchmark_key,
+            "comparison_group_key": comparison_group_key,
             "comparison": {
                 "dataset": first["dataset"],
                 "model_variant": first["model_variant"],
@@ -176,7 +176,7 @@ def format_report_text(payload: dict) -> str:
             f"model={comparison['model_variant']}",
             f"ratio={comparison['pool_ratio']}",
             f"pool_nonlinearity={comparison['pool_nonlinearity']}",
-            f"benchmark={group['benchmark_key']}",
+            f"comparison_group={group['comparison_group_key']}",
         ]
         tags = group.get("tags", [])
         if len(tags) == 1:

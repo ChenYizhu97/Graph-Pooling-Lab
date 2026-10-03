@@ -8,7 +8,6 @@ from gplab.benchmark.config import (
     SplitConfig,
     TrainingConfig,
 )
-from gplab.benchmark.execution import ExecutionOptions
 from gplab.jobs.job import ExperimentJob
 
 
@@ -16,7 +15,6 @@ def build_cli_job(
     *,
     model_config: dict,
     training_config: dict,
-    execution_config: dict,
     pool: Optional[str],
     pool_ratio: Optional[float],
     pool_nonlinearity: Optional[str],
@@ -58,6 +56,10 @@ def build_cli_job(
             batch_size=int(training_section["batch_size"]),
             patience=int(training_section["patience"]),
             epochs=int(training_section["epochs"]),
+            activation_checkpoint=bool(
+                activation_checkpoint if activation_checkpoint is not None
+                else training_section.get("activation_checkpoint", False)
+            ),
             split=SplitConfig(
                 train=float(split_train if split_train is not None else split_section["train"]),
                 val=float(split_val if split_val is not None else split_section["val"]),
@@ -71,12 +73,4 @@ def build_cli_job(
         ),
     )
 
-    execution_defaults = dict(execution_config.get("execution", {}))
-    execution = ExecutionOptions(
-        activation_checkpoint=bool(
-            activation_checkpoint
-            if activation_checkpoint is not None
-            else execution_defaults.get("activation_checkpoint", False)
-        ),
-    )
-    return ExperimentJob(experiment=experiment, execution=execution, log_file=log_file, tag=tag)
+    return ExperimentJob(experiment=experiment, log_file=log_file, tag=tag)

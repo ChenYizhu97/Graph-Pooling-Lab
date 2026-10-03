@@ -4,6 +4,7 @@ lr = 0.0005
 batch_size = 32
 patience = 50
 epochs = 500
+activation_checkpoint = false
 
 [training.split]
 train = 0.8
@@ -13,6 +14,3 @@ val = 0.1
 mode = "auto"
 base = 20260320
 allow_duplicates = false
-
-[execution]
-activation_checkpoint = false

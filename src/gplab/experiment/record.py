@@ -3,8 +3,7 @@ from typing import Any
 import numpy as np
 
 from gplab.benchmark.config import ExperimentConfig
-from gplab.benchmark.execution import ExecutionOptions
-from gplab.benchmark.identity import compute_experiment_id, compute_record_benchmark_key
+from gplab.benchmark.identity import compute_comparison_group_key
 from gplab.experiment.identity import attach_record_id, require_record_id
 
 ExperimentRecord = dict[str, Any]
@@ -30,7 +29,6 @@ def build_result(run_results: list[dict], *, trainable_parameters: dict) -> dict
 def build_record(
     experiment: ExperimentConfig,
     *,
-    execution: ExecutionOptions,
     environment: dict,
     result: dict,
     tag: str | None = None,
@@ -39,8 +37,6 @@ def build_record(
     """Combine configuration, measurements, and provenance into a content-addressed record."""
     record = {
         "experiment": experiment.to_mapping(),
-        "execution": execution.to_mapping(),
-        "experiment_id": compute_experiment_id(experiment),
         "environment": environment,
         "result": result,
         "tag": tag,
@@ -66,13 +62,12 @@ def summarize_record(record: ExperimentRecord) -> dict:
 
     summary = {
         "record_id": ensured["record_id"],
-        "experiment_id": ensured["experiment_id"],
-        "benchmark_key": compute_record_benchmark_key(ensured),
+        "comparison_group_key": compute_comparison_group_key(ensured),
         "dataset": ensured["experiment"]["dataset"],
         "pool": ensured["experiment"]["pool"]["name"],
         "pool_ratio": ensured["experiment"]["pool"]["ratio"],
         "pool_nonlinearity": ensured["experiment"]["pool"]["nonlinearity"],
-        "activation_checkpoint": bool(ensured["execution"]["activation_checkpoint"]),
+        "activation_checkpoint": bool(ensured["experiment"]["training"]["activation_checkpoint"]),
         "model_variant": ensured["experiment"]["model"]["variant"],
         "runs": len(runs),
         "mean": float(ensured["result"]["mean"]),

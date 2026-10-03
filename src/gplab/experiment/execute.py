@@ -6,21 +6,18 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 import torch.nn.functional as F
-from rich import print as rprint
 from torch_geometric.data import Dataset
-from torch_geometric.nn import summary
-from tqdm import tqdm
 
 from gplab.benchmark.compatibility import (
     resolve_dataset_connectivity_type,
     validate_pool_compatibility,
 )
 from gplab.benchmark.config import ExperimentConfig, TrainingConfig
-from gplab.benchmark.execution import ExecutionOptions
 from gplab.benchmark.runs import RunSpec, resolve_runs
 from gplab.data.dataset import load_dataset, split_dataset
-from gplab.environment import collect_environment_info, console_separator, print_experiment_info
+from gplab.environment import collect_environment_info
 from gplab.experiment.measurements import capture_structural_statistics, count_trainable_parameters
+from gplab.experiment.progress import TrainingProgress
 from gplab.experiment.record import build_result
 from gplab.experiment.reproducibility import (
     build_loader,
@@ -72,7 +69,7 @@ def prepare_experiment(
 
 
 def _build_model(
-    prepared: PreparedExperiment, execution: ExecutionOptions, device: torch.device,
+    prepared: PreparedExperiment, device: torch.device,
 ) -> GraphClassifier:
     config = prepared.config
     return GraphClassifier(
@@ -83,19 +80,18 @@ def _build_model(
         pool_nonlinearity=config.pool.nonlinearity,
         config=config.model,
         avg_node_num=prepared.dataset_stats["avg_node_num"],
-        activation_checkpoint=execution.activation_checkpoint,
+        activation_checkpoint=config.training.activation_checkpoint,
     ).to(device)
 
 
 def execute_run(
     model,
     dataset,
-    run_idx: int,
     run: RunSpec,
     train: TrainingConfig,
     device: torch.device,
     *,
-    show_progress: bool,
+    progress: TrainingProgress | None = None,
 ) -> dict:
     """Train from a seeded reset, restore minimum validation loss, then test exactly once."""
     seed_everything(run.seed)
@@ -123,10 +119,13 @@ def execute_run(
         torch.cuda.reset_peak_memory_stats(device)
     training_started = time.perf_counter()
 
-    loop = tqdm(range(1, train.epochs + 1), disable=not show_progress)
-    for epoch in loop:
+    for epoch in range(1, train.epochs + 1):
         epochs_trained = epoch
+        if progress is not None:
+            progress.stage("training")
         train_epoch(model, train_loader, optimizer, loss_fn, device)
+        if progress is not None:
+            progress.stage("validation")
         validation = evaluate_epoch(model, val_loader, loss_fn, device)
 
         # Pool auxiliary losses affect training, but checkpoint selection uses
@@ -142,11 +141,11 @@ def execute_run(
         else:
             stale_epochs += 1
 
-        loop.set_description(f"Run [{run_idx}/{train.runs}]-Epoch [{epoch}/{train.epochs}]")
-        loop.set_postfix(
-            best_epoch=best_epoch,
-            best_val_loss=best_val_loss,
-        )
+        if progress is not None:
+            progress.update_epoch(
+                epoch, val_loss=validation.classification_loss, best_loss=best_val_loss,
+                best_epoch=best_epoch, stale_epochs=stale_epochs, patience=train.patience,
+            )
         # Keep the existing strict boundary: stop on patience + 1 consecutive
         # non-improving epochs; patience=0 stops at the first non-improvement.
         if stale_epochs > train.patience:
@@ -163,6 +162,8 @@ def execute_run(
 
     if best_checkpoint is None:
         raise RuntimeError("Training did not produce a validation checkpoint.")
+    if progress is not None:
+        progress.stage("final test")
     model.load_state_dict(best_checkpoint)
     with capture_structural_statistics(model) as structural_statistics:
         test = evaluate_epoch(model, test_loader, loss_fn, device)
@@ -182,7 +183,6 @@ def execute_run(
 
 def run_experiment(
     config: ExperimentConfig,
-    execution: ExecutionOptions,
     *,
     fixed_runs: tuple[RunSpec, ...] | None = None,
     emit_text: bool = True,
@@ -197,19 +197,21 @@ def run_experiment(
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     environment = collect_environment_info(device)
     prepared = prepare_experiment(config, fixed_runs)
-    model = _build_model(prepared, execution, device)
-    if emit_text:
-        print_experiment_info(config, execution, device)
-        rprint(summary(model, data=prepared.dataset[0].to(device), leaf_module=None, max_depth=5))
+    model = _build_model(prepared, device)
 
     run_results = []
-    for run_idx, run in enumerate(prepared.runs, start=1):
-        run_results.append(execute_run(
-            model, prepared.dataset, run_idx=run_idx, run=run,
-            train=config.training, device=device, show_progress=emit_text,
-        ))
-        if emit_text and run_idx != config.training.runs:
-            rprint(console_separator("-"))
+    with TrainingProgress(
+        f"{config.dataset} · {config.pool.name} · {device}",
+        config.training.runs, config.training.epochs, enabled=emit_text,
+    ) as progress:
+        for run_idx, run in enumerate(prepared.runs, start=1):
+            progress.start_run(run_idx, run.seed)
+            result = execute_run(
+                model, prepared.dataset, run=run, train=config.training, device=device,
+                progress=progress if emit_text else None,
+            )
+            run_results.append(result)
+            progress.finish_run(result)
 
     # Training materializes lazy parameters, so count them only after execution.
     result = build_result(run_results, trainable_parameters=count_trainable_parameters(model))

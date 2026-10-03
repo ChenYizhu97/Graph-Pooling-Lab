@@ -57,12 +57,12 @@ Built-in scalar-input domains are not broadened merely by supporting sets.
 ### INTERFACE_MODEL
 
 Use Job JSON for agent-driven execution. A Job JSON request contains one
-benchmark-defining `experiment` and optional execution settings.
+benchmark-defining `experiment` and optional logging/replay fields.
 
 Successful execution returns a `train_result` whose `record` is the canonical
 persisted `ExperimentRecord`. Query and replay operate on JSONL logs containing
-those records. An `experiment_id` identifies the requested configuration and
-remains unchanged during replay. `source_record_id` identifies the source record.
+those records. `record_id` identifies a completed record for lookup and replay;
+`source_record_id` identifies the source record of a replay.
 
 ### JOB_JSON_SCHEMA
 
@@ -76,7 +76,6 @@ Required top-level fields:
 
 Optional top-level fields:
 
-- `execution`: object containing `activation_checkpoint`
 - `log_file`: string or null, append destination for this job only
 - `tag`: string or null
 - `runs`: null or a nonempty array of `{seed, split}` objects for exact replay
@@ -128,14 +127,11 @@ Optional `experiment.training` fields:
 
 - `lr`: positive finite number
 - `batch_size`: integer greater than 0
+- `activation_checkpoint`: boolean, defaults to false
 - `split`: object with `train` and `val`
 - `seeds`: object with `mode`, `base`, `values`, and `allow_duplicates`
 
 `experiment.training.seeds.mode` is `"auto"` or `"list"`.
-
-Optional `execution` fields:
-
-- `activation_checkpoint`: boolean
 
 Omitted optional fields use GPLab automation defaults. Unknown fields are
 rejected.
@@ -186,6 +182,7 @@ Complete example:
       "batch_size": 32,
       "patience": 50,
       "epochs": 500,
+      "activation_checkpoint": false,
       "split": {
         "train": 0.8,
         "val": 0.1
@@ -198,7 +195,6 @@ Complete example:
       }
     }
   },
-  "execution": {"activation_checkpoint": false},
   "log_file": null,
   "tag": null,
   "runs": null,
@@ -217,21 +213,14 @@ Records are append-only JSONL entries produced by executed requests.
   "experiment": {
     "...": "ExperimentConfig mapping"
   },
-  "execution": {
-    "...": "ExecutionOptions mapping"
-  },
-  "experiment_id": "f7a12815cbc5",
   "tag": null,
   "source_record_id": null,
   "environment": {
-    "created_at_utc": "2026-07-02T00:00:00+00:00",
     "python_version": "3.14.7",
     "torch_version": "2.10.0+cu128",
     "torch_geometric_version": "2.8.0.post1",
-    "device": "cpu",
-    "cuda_available": false,
-    "cudnn_deterministic": true,
-    "cudnn_benchmark": false
+    "tgp_version": "1.0.2",
+    "device": "cpu"
   },
   "result": {
     "mean": 0.5,
@@ -296,7 +285,7 @@ One record log line is one `ExperimentRecord`. `gplab-query` and `gplab-replay`
 both consume this JSONL format; malformed records return structured config
 errors instead of being treated as partial records.
 
-Replay rebuilds an `ExperimentJob` from `experiment`, `execution`, and the
+Replay rebuilds an `ExperimentJob` from `experiment` and the
 seed/split pairs in `result.runs`. The requested seed policy remains unchanged.
 The replay job's `runs` field supplies the exact recorded repetitions, while
 `source_record_id` preserves provenance. The source log destination is never reused.
@@ -306,11 +295,14 @@ The replay job's `runs` field supplies the exact recorded repetitions, while
 `max_test_acc` and `min_test_acc` are the maximum and minimum of the per-run
 `test_acc` values across runs.
 
+`comparison_group_key` groups matching accuracy-comparison settings, excluding
+pool name and activation checkpointing. It uses actual seeds and splits and does
+not certify structural comparability. It is derived at query time, never persisted.
+
 Query summaries include:
 
 - `record_id`
-- `experiment_id`
-- `benchmark_key`
+- `comparison_group_key`
 - `dataset`
 - `pool`
 - `pool_ratio`
@@ -402,7 +394,7 @@ Output kind: `train_result` on success. Success responses contain:
 
 - `record`: the canonical `ExperimentRecord`
 - `summary`: a derived result summary
-- `context`: command context with `source="job_json"` and `experiment_id`; `job_file`
+- `context`: command context with `source="job_json"`; `job_file`
   is included only for file input
 
 Invalid jobs return kind `job_error`.
@@ -457,7 +449,7 @@ record views, not canonical `ExperimentRecord` objects. `context` reports
 `total_records`, and `matched_records`.
 
 `query_report` contains the same `context` plus grouped benchmark comparisons.
-Each group contains `benchmark_key`, a `comparison` block, and ranked
+Each group contains `comparison_group_key`, a `comparison` block, and ranked
 `summaries`.
 
 ### gplab-replay
@@ -473,8 +465,8 @@ configuration and includes concrete seeds and splits in its top-level `runs`.
 It can also be submitted directly to `gplab-run-job`.
 
 Output kind: `replay_result`. The top-level `job` is the replayable Job JSON,
-and `context` contains `source="record_replay"`, `source_record_id`, and the
-unchanged `experiment_id`. If `--run` is used, `rerun.payload` is a standard
+and `context` contains `source="record_replay"` and `source_record_id`.
+If `--run` is used, `rerun.payload` is a standard
 `train_result`.
 
 ## Rules
@@ -490,6 +482,5 @@ unchanged `experiment_id`. If `--run` is used, `rerun.payload` is a standard
   derived views, not persisted records.
 - Treat `gplab-train` as a human convenience entrypoint, not the agent protocol.
 - Treat `ExperimentConfig` as the benchmark-defining object.
-- Treat `ExecutionOptions` as execution-only.
 - Do not derive benchmark grouping in query code; use the benchmark comparison layer.
 - Dense pool output nodes are fixed cluster slots. Do not infer pruning or input-node retention.

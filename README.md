@@ -143,11 +143,19 @@ gplab-train \
 `gplab-train` is the human convenience entrypoint. Automation should submit one
 Job JSON request per `gplab-run-job` process.
 
+Text mode shows Rich progress for completed runs and the current epoch budget,
+with validation loss, best epoch, and the early-stopping counter. Epoch totals
+are upper limits; a stopped run does not pretend to have completed every epoch.
+Each run leaves a final summary with its test accuracy. Progress writes to stderr;
+redirected output contains plain start/end lines, while JSON mode is silent until
+its response. Displaying progress never runs the model just to print its structure.
+
 ## Job Configuration
 
 A Job JSON describes exactly one experiment. Optional fields are filled
 from GPLab's automation defaults before the job is validated.
-`execution` controls activation checkpointing; `log_file` and `tag` are top-level
+`experiment.training.activation_checkpoint` controls activation checkpointing;
+`log_file` and `tag` are top-level
 job fields. Optional `runs` supplies explicit `{seed, split}` entries for replay.
 
 ```json
@@ -175,6 +183,7 @@ job fields. Optional `runs` supplies explicit `{seed, split}` entries for replay
       "batch_size": 32,
       "patience": 50,
       "epochs": 500,
+      "activation_checkpoint": false,
       "split": {
         "train": 0.8,
         "val": 0.1
@@ -187,7 +196,6 @@ job fields. Optional `runs` supplies explicit `{seed, split}` entries for replay
       }
     }
   },
-  "execution": {"activation_checkpoint": false},
   "log_file": "runs/bench.jsonl",
   "tag": "baseline_proteins"
 }
@@ -218,10 +226,9 @@ contract.
 One JSONL line is one canonical `ExperimentRecord` containing:
 
 - the benchmark-defining `experiment`;
-- execution-only settings;
 - the actual seed and concrete split for each entry in `result.runs`;
-- software/device metadata in `environment`;
-- `experiment_id`, `tag`, and optional replay provenance in `source_record_id`;
+- Python, Torch, PyG, TGP versions and the actual device in `environment`;
+- `tag` and optional replay provenance in `source_record_id`;
 - per-run and aggregate results, including compact training and pooled-graph
   measurements;
 - a content-derived `record_id`.
@@ -248,7 +255,7 @@ gplab-query --log-file runs/bench.jsonl --show-experiment --show-replay
 ```
 
 Replay reconstructs a Job from the stored configuration and `result.runs`. It
-retains the configuration and experiment ID, and executes the recorded seeds and
+retains the configuration, and executes the recorded seeds and
 exact train/validation/test indices through the same training path:
 
 ```bash
@@ -355,7 +362,7 @@ The single-pool API is `benchmark.compatibility.validate_pool_compatibility`;
 
 `config/model.toml` defines model defaults, including the independent
 `pre_conv` and `post_conv` roles. `config/experiment.toml` defines training,
-split, seed, and execution defaults. CLI flags override these files before a
+split, seed, and activation-checkpoint defaults. CLI flags override these files before a
 `ExperimentConfig` is built.
 
 ```text

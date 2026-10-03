@@ -13,7 +13,6 @@ from gplab.benchmark.compatibility import (
     validate_pool_compatibility,
 )
 from gplab.benchmark.config import ExperimentConfig
-from gplab.benchmark.execution import ExecutionOptions
 from gplab.benchmark.runs import resolve_runs
 from gplab.data.profiles import DATASET_PROFILES
 from gplab.experiment.execute import prepare_experiment
@@ -65,6 +64,7 @@ def _config(pool="nopool", pre_conv="GCN", post_conv="GCN", variant="plain"):
             "pre_gnn": [4], "post_gnn": [8, 4], "variant": variant,
         },
         "training": {
+            "activation_checkpoint": False,
             "runs": 1, "lr": 0.001, "batch_size": 2, "patience": 0, "epochs": 1,
             "split": {"train": 0.5, "val": 0.25},
             "seeds": {"mode": "list", "base": 1, "values": [1], "allow_duplicates": False},
@@ -212,7 +212,8 @@ class CompatibilityTests(unittest.TestCase):
                     "dataset": "MUTAG",
                     "pool": {"name": "nopool", "ratio": 0.5},
                     "model": {"conv_layer": "GraphConv"},
-                    "training": {"runs": 1, "epochs": 1, "patience": 0},
+                    "training": {
+            "activation_checkpoint": False,"runs": 1, "epochs": 1, "patience": 0},
                 }
             })
 
@@ -500,7 +501,7 @@ class CompatibilityTests(unittest.TestCase):
     def test_replay_uses_recorded_splits(self):
         experiment = _config()
         record = {
-            "experiment": experiment.to_mapping(), "execution": ExecutionOptions().to_mapping(),
+            "experiment": experiment.to_mapping(),
             "record_id": "source", "tag": None,
             "result": {"runs": [{"seed": 1, "split": {"train": [2, 3], "val": [1], "test": [0]}}]},
         }

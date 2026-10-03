@@ -1,4 +1,4 @@
-"""Validated experiment settings, independent of execution, logging, and resolved runs."""
+"""Validated experiment settings, independent of logging and resolved runs."""
 from __future__ import annotations
 
 import math
@@ -178,6 +178,8 @@ class TrainingConfig:
     epochs: int
     split: SplitConfig
     seeds: SeedPolicy
+    # Recompute activations during backward to reduce memory; no weights are saved to disk.
+    activation_checkpoint: bool = False
 
     def __post_init__(self) -> None:
         if self.runs <= 0:
@@ -202,6 +204,7 @@ class TrainingConfig:
             batch_size=int(value["batch_size"]),
             patience=int(value["patience"]),
             epochs=int(value["epochs"]),
+            activation_checkpoint=bool(value["activation_checkpoint"]),
             split=SplitConfig.from_mapping(value["split"]),
             seeds=SeedPolicy.from_mapping(value["seeds"]),
         )
@@ -213,6 +216,7 @@ class TrainingConfig:
             "batch_size": self.batch_size,
             "patience": self.patience,
             "epochs": self.epochs,
+            "activation_checkpoint": self.activation_checkpoint,
             "split": self.split.to_mapping(),
             "seeds": self.seeds.to_mapping(),
         }

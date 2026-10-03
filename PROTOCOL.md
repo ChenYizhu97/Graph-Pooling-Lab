@@ -16,8 +16,8 @@ ExperimentConfig =
   training
 ```
 
-`ExecutionOptions` holds `activation_checkpoint`. `ExperimentJob` combines the
-configuration and execution options with `log_file`, `tag`, optional fixed runs,
+`TrainingConfig` includes `activation_checkpoint`, which trades compute for memory.
+`ExperimentJob` combines the configuration with `log_file`, `tag`, optional fixed runs,
 and replay provenance. Those job fields do not belong to the training loop.
 
 ## Execution Flow
@@ -30,19 +30,23 @@ and replay provenance. Those job fields do not belong to the training loop.
    appends it to JSONL before returning the CLI response.
 
 `PreparedExperiment` contains configuration, loaded data, dataset statistics,
-and validated runs. Execution options and the device are passed explicitly to
-model construction. Environment metadata is descriptive and never controls training.
+and validated runs. Model construction reads training settings from that configuration
+and receives the device explicitly. Environment metadata records only Python, Torch,
+PyG, and TGP versions plus the actual device; it never controls training.
 
 Every run stores its actual seed and split alongside its measurements in
 `result.runs`. Replay copies those into the job's `runs` field, bypassing generation
-without rewriting the original configuration or changing `experiment_id`.
+without rewriting the original configuration.
 `source_record_id` identifies the replay's source; `record_id` hashes the completed
 record. Split validation rejects empty, repeated, overlapping, missing, and
 out-of-range indices before training.
 
-Benchmark grouping uses actual seeds and concrete splits, not just the requested
-seed policy and split fractions. It remains a protocol grouping aid, not evidence
-that dataset contents or software environments are identical.
+`comparison_group_key` is computed for query summaries and reports, not stored
+in experiment records. It groups records with the same dataset, model, pooling
+ratio/activation, training budget, and actual seeds and splits, excluding pool name.
+Activation checkpointing is excluded from accuracy grouping; resource comparisons
+must account for it separately. This grouping is independent of structural
+comparability checks and does not establish identical data contents or environments.
 
 ## Data Protocol
 

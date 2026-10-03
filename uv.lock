@@ -283,7 +283,6 @@ dependencies = [
     { name = "torch" },
     { name = "torch-geometric" },
     { name = "torch-geometric-pool" },
-    { name = "tqdm" },
     { name = "typer" },
 ]
 
@@ -300,7 +299,6 @@ requires-dist = [
     { name = "torch", specifier = "==2.10.0", index = "https://download.pytorch.org/whl/cu128" },
     { name = "torch-geometric", specifier = ">=2.6" },
     { name = "torch-geometric-pool", specifier = "==1.0.2" },
-    { name = "tqdm" },
     { name = "typer" },
 ]
 

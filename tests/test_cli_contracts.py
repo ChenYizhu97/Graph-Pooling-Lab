@@ -12,8 +12,8 @@ import torch
 from torch_geometric.data import Data, InMemoryDataset
 from typer.testing import CliRunner
 
-from gplab.benchmark.identity import compute_record_benchmark_key
-from gplab.cli import query, replay, run_train_job
+from gplab.benchmark.identity import compute_comparison_group_key
+from gplab.cli import query, replay, run_train_job, train_cli
 from gplab.experiment.query import QuerySpec, build_benchmark_report
 from gplab.experiment.record import summarize_record
 from gplab.graph import ConnectivityType
@@ -58,7 +58,7 @@ class CliContractTests(unittest.TestCase):
         payload = json.loads(result.stdout)
         self.assertEqual(result.exit_code, 1)
         self.assertEqual(payload["kind"], "train_error")
-        self.assertIn("experiment_id", payload["error"]["details"])
+        self.assertEqual(payload["error"]["details"]["source"], "job_json")
 
     def test_job_defaults_are_isolated_and_nested_types_are_strict(self):
         first = parse_job(self.job).to_mapping()
@@ -132,7 +132,6 @@ class CliContractTests(unittest.TestCase):
         restored = parse_job(exported)
         self.assertEqual(restored, replay_job)
         self.assertEqual(restored.experiment.to_mapping(), self.record["experiment"])
-        self.assertEqual(restored.experiment_id, self.record["experiment_id"])
         self.assertEqual(restored.source_record_id, self.record["record_id"])
         self.assertIsNone(ExperimentJob.from_record(self.record).log_file)
         with patch("gplab.jobs.execute.run_experiment", return_value={
@@ -142,18 +141,18 @@ class CliContractTests(unittest.TestCase):
         persisted = json.loads(self.log.read_text().splitlines()[-1])
         self.assertEqual(payload["record"], persisted)
         self.assertEqual(persisted["source_record_id"], self.record["record_id"])
-        self.assertEqual(persisted["experiment_id"], self.record["experiment_id"])
-        self.assertNotIn("log_file", persisted["execution"])
+        self.assertNotIn("log_file", persisted)
 
     def test_benchmark_grouping_uses_actual_splits_and_seeds(self):
         record = copy.deepcopy(self.record)
-        expected = compute_record_benchmark_key(record)
+        expected = compute_comparison_group_key(record)
         record["experiment"]["pool"]["name"] = "topkpool"
         record["experiment"]["training"]["seeds"] = {"mode": "list"}
-        self.assertEqual(compute_record_benchmark_key(record), expected)
+        record["experiment"]["training"]["activation_checkpoint"] = True
+        self.assertEqual(compute_comparison_group_key(record), expected)
         split = record["result"]["runs"][0]["split"]
         split["train"][0], split["test"][0] = split["test"][0], split["train"][0]
-        self.assertNotEqual(compute_record_benchmark_key(record), expected)
+        self.assertNotEqual(compute_comparison_group_key(record), expected)
 
     def test_replay_json_rejects_invalid_index_types_and_unknown_fields(self):
         exported = ExperimentJob.from_record(self.record).to_mapping()
@@ -167,3 +166,58 @@ class CliContractTests(unittest.TestCase):
             with self.subTest(change=change), self.assertRaises(ValueError) as caught:
                 parse_job(job)
             self.assertEqual(caught.exception.field, field)
+
+
+    def test_record_schema_is_minimal_and_group_key_is_derived(self):
+        self.assertEqual(set(self.record), {
+            "record_id", "experiment", "environment", "result", "tag", "source_record_id",
+        })
+        self.assertEqual(set(self.record["environment"]), {
+            "python_version", "torch_version", "torch_geometric_version", "tgp_version", "device",
+        })
+        self.assertFalse(self.record["experiment"]["training"]["activation_checkpoint"])
+        summary = summarize_record(self.record)
+        self.assertIn("comparison_group_key", summary)
+        report = build_benchmark_report([self.record], QuerySpec(str(self.log)))
+        self.assertEqual(report["groups"][0]["comparison_group_key"], summary["comparison_group_key"])
+
+    def test_training_checkpoint_round_trips_and_rejects_non_boolean_json(self):
+        job = copy.deepcopy(self.job)
+        job["experiment"]["training"]["activation_checkpoint"] = True
+        parsed = parse_job(job)
+        self.assertTrue(parsed.experiment.training.activation_checkpoint)
+        self.assertEqual(parse_job(parsed.to_mapping()), parsed)
+        record = copy.deepcopy(self.record)
+        record["experiment"] = parsed.experiment.to_mapping()
+        self.assertTrue(ExperimentJob.from_record(record).experiment.training.activation_checkpoint)
+        job["experiment"]["training"]["activation_checkpoint"] = "false"
+        with self.assertRaises(ValueError) as caught:
+            parse_job(job)
+        self.assertEqual(caught.exception.field, "experiment.training.activation_checkpoint")
+        with self.assertRaises(ValueError):
+            parse_job({**self.job, "execution": {"activation_checkpoint": True}})
+
+    def test_checkpoint_cli_overrides_training_toml(self):
+        config = self.log.parent / "experiment.toml"
+        config.write_text(
+            '[training]\nruns=1\nlr=0.001\nbatch_size=8\npatience=0\nepochs=1\n'
+            'activation_checkpoint=true\n[training.split]\ntrain=0.8\nval=0.1\n',
+            encoding="utf-8",
+        )
+        for flag, expected in (([], True), (["--no-activation-checkpoint"], False)):
+            with self.subTest(flag=flag), patch(
+                "gplab.cli.train_cli.execute_job", return_value={"ok": True},
+            ) as execute:
+                result = self.runner.invoke(train_cli.app, [
+                    "--dataset", "MUTAG", "--experiment-config", str(config),
+                    "--output-format", "json", *flag,
+                ])
+                self.assertEqual(result.exit_code, 0, result.output)
+                self.assertEqual(execute.call_args.args[0].experiment.training.activation_checkpoint, expected)
+
+    def test_replay_environment_check_includes_tgp(self):
+        recorded = self.record["environment"]
+        current = {**recorded, "tgp_version": "different"}
+        status, details = replay._compatibility_status(recorded, current)
+        self.assertEqual(status, "mismatch")
+        self.assertEqual([item["field"] for item in details if not item["match"]], ["tgp"])

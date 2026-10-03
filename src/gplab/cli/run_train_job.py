@@ -60,7 +60,6 @@ def main(
         with redirect_stdout_for_json(json_output):
             job = _load_job_input(job_file=job_file, job_json=job_json, job_stdin=job_stdin)
             job = parse_job(job)
-            context["experiment_id"] = job.experiment_id
             # Preserve the response contract: parsing/validation failures are
             # job_error; failures after a job is accepted are train_error.
             error_kind = "train_error"

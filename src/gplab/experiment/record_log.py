@@ -4,7 +4,7 @@ from gplab.experiment.identity import require_record_id
 from gplab.experiment.record import ExperimentRecord
 from gplab.utils.jsonl import read_jsonl
 
-RECORD_FIELDS = ("experiment_id", "experiment", "execution", "environment", "result", "tag", "source_record_id")
+RECORD_FIELDS = ("experiment", "environment", "result", "tag", "source_record_id")
 
 
 class RecordLogError(ValueError):

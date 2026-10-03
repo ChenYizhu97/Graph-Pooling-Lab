@@ -5,12 +5,11 @@ from typing import Optional
 from gplab.utils.validation import validate_seed_mode_value
 
 from .defaults import (
-    AUTOMATION_EXECUTION_DEFAULTS,
     AUTOMATION_MODEL_DEFAULTS,
     AUTOMATION_TRAINING_DEFAULTS,
 )
 
-JOB_TOP_LEVEL_FIELDS = {"experiment", "execution", "log_file", "tag", "runs", "source_record_id"}
+JOB_TOP_LEVEL_FIELDS = {"experiment", "log_file", "tag", "runs", "source_record_id"}
 JOB_REQUIRED_TOP_LEVEL_FIELDS = {"experiment"}
 EXPERIMENT_FIELDS = {"dataset", "pool", "model", "training"}
 EXPERIMENT_REQUIRED_FIELDS = {"dataset", "pool", "training"}
@@ -24,7 +23,6 @@ TRAINING_FIELDS = set(AUTOMATION_TRAINING_DEFAULTS)
 TRAINING_REQUIRED_FIELDS = {"runs", "epochs", "patience"}
 SPLIT_FIELDS = {"train", "val"}
 SEED_FIELDS = {"mode", "base", "values", "allow_duplicates"}
-EXECUTION_FIELDS = set(AUTOMATION_EXECUTION_DEFAULTS)
 
 
 class JobSchemaError(ValueError):
@@ -210,12 +208,6 @@ def normalize_job_shape(job: dict) -> dict:
     }
     _reject_unknown_fields(seeds, allowed=SEED_FIELDS, label="experiment.training.seeds")
 
-    execution = {
-        **deepcopy(AUTOMATION_EXECUTION_DEFAULTS),
-        **require_mapping(raw.get("execution", {}), label="execution"),
-    }
-    _reject_unknown_fields(execution, allowed=EXECUTION_FIELDS, label="execution")
-
     normalized = {
         "experiment": {
             "dataset": _require_string(experiment["dataset"], field_name="experiment.dataset"),
@@ -233,7 +225,7 @@ def normalize_job_shape(job: dict) -> dict:
                 **_normalize_fields(training, "experiment.training", {
                     "runs": _normalize_int, "lr": _normalize_float,
                     "batch_size": _normalize_int, "patience": _normalize_int,
-                    "epochs": _normalize_int,
+                    "epochs": _normalize_int, "activation_checkpoint": _normalize_bool,
                 }),
                 "split": _normalize_fields(split, "experiment.training.split", {
                     "train": _normalize_float, "val": _normalize_float,
@@ -250,9 +242,6 @@ def normalize_job_shape(job: dict) -> dict:
                 },
             },
         },
-        "execution": _normalize_fields(execution, "execution", {
-            "activation_checkpoint": _normalize_bool,
-        }),
     }
 
     normalized.update({

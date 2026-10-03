@@ -24,7 +24,7 @@ def _compatibility_status(recorded: dict, current: dict) -> tuple[str, list[dict
         ("torch_version", "torch"),
         ("torch_geometric_version", "torch_geometric"),
         ("device", "device"),
-        ("cuda_available", "cuda_available"),
+        ("tgp_version", "tgp"),
     ]
     details = [
         {"field": label, "recorded": recorded[key], "current": current[key],
@@ -62,7 +62,6 @@ def main(
             "job": replay_job,
             "context": {
                 "source": "record_replay",
-                "experiment_id": replay_job_spec.experiment_id,
                 "source_record_id": record["record_id"],
             },
             "paths": {
@@ -77,7 +76,6 @@ def main(
         if not json_output:
             print(f"Replay record: {record['record_id']}")
             print("Replay mode: in-process record replay")
-            print(f"Experiment ID: {replay_job_spec.experiment_id}")
             if replay_log_file is not None:
                 print(f"Replay log file: {replay_log_file}")
             if status == "compatible":
@@ -96,7 +94,6 @@ def main(
                     context={
                         "source": "record_replay",
                         "source_record_id": record["record_id"],
-                        "experiment_id": replay_job_spec.experiment_id,
                         "job": replay_job,
                     },
                 )

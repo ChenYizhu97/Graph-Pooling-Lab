@@ -1,8 +1,6 @@
-"""Identify requested experiments and group completed records by their actual protocol."""
+"""Group completed records by the settings used for accuracy comparisons."""
 import hashlib
 import json
-
-from .config import ExperimentConfig
 
 
 def _hash_payload(payload: dict) -> str:
@@ -10,21 +8,18 @@ def _hash_payload(payload: dict) -> str:
     return hashlib.sha1(encoded).hexdigest()[:12]
 
 
-def compute_experiment_id(config: ExperimentConfig) -> str:
-    """Identify the full requested configuration, including pool and seed policy."""
-    return _hash_payload(config.to_mapping())
-
-
-def compute_record_benchmark_key(record: dict) -> str:
+def compute_comparison_group_key(record: dict) -> str:
     """Group pools using the same model, training budget, and actual seeds and splits.
 
     Seed-generation policies and split fractions do not distinguish completed
-    experiments when they produced identical runs. Concrete splits do: equal seeds
-    alone cannot establish that two records trained and tested on the same examples.
+    experiments when they produced identical runs. Activation checkpointing is also
+    excluded from accuracy grouping; memory/time comparisons must account for it.
+    Equal seeds alone cannot establish that two records trained and tested on
+    the same examples; their concrete splits must also match.
     """
     config = record["experiment"]
     training = {key: value for key, value in config["training"].items()
-                if key not in {"seeds", "split"}}
+                if key not in {"seeds", "split", "activation_checkpoint"}}
     return _hash_payload({
         "dataset": config["dataset"],
         "model": config["model"],
