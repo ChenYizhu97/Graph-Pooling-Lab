@@ -60,13 +60,32 @@ The current focus is on:
 
 ## Install
 
-GPLab requires Python 3.10 or newer and depends on PyTorch, PyTorch Geometric,
-Typer, Rich, TOML, NumPy, and tqdm.
+GPLab uses [uv](https://docs.astral.sh/uv/) to manage its local environment and
+locked dependencies. Python 3.10 is selected by `.python-version`; the lock keeps
+the previously tested PyTorch 2.1.0, PyG 2.4.0, and NumPy 1.26.0 versions.
 
 ```bash
-conda activate torch_env
-python3 -m pip install -e .
+uv sync --locked
+uv run gplab-train --help
+uv run python -m unittest discover -s tests -v
+uv run ruff check .
 ```
+
+Prefix the commands below with `uv run`, or activate `.venv` first. No Conda
+environment is required. `pyproject.toml` is the dependency source of truth;
+commit `uv.lock` when intentionally updating dependencies with `uv lock`.
+The default Linux PyTorch wheel includes CUDA dependencies and also runs on CPU.
+
+To inspect fixed-cluster dense pooling or run one-epoch integration jobs:
+
+```bash
+uv run python scripts/check_dense_adapter.py
+POOLS="nopool sagpool" DATASETS="MUTAG" bash scripts/smoke_test.sh
+```
+
+The smoke runner executes one Job JSON per subprocess and saves a combined
+report to `RESULTS_PATH` (default `/tmp/gplab_smoke_result.json`). Dataset loading
+may download TU datasets into `/tmp/TUDataset`.
 
 ## Quick Start
 
@@ -274,10 +293,43 @@ must:
   `edge_weight`, `perm`, `score`, and `aux_loss`;
 - implement `reset_parameters()`.
 
-GPLab applies the declared signature to custom profiles during the same
+`signatures` accepts sets, frozensets, lists, or tuples and is stored as a
+`frozenset`. Declare each supported input/output pair explicitly. For example,
+`{PoolingSignature(BINARY, BINARY), PoolingSignature(SCALAR, SCALAR)}` accepts
+both inputs while preserving their distinct output domains. For a given input,
+all declared outputs must be supported by the post-pooling encoder.
+
+GPLab applies these declared signatures to custom profiles during the same
 compatibility validation as built-ins. See
 [`examples/custom_pool_plugin.py`](examples/custom_pool_plugin.py) for a complete
 profile.
+
+To check a specific group under one shared dataset/model configuration:
+
+```python
+from gplab.benchmark import ComparisonSetting, check_comparability
+
+# model_config is the validated ModelConfig used by every compared method.
+setting = ComparisonSetting(dataset="MUTAG", model=model_config)
+result = check_comparability({"topkpool", "diffpool"}, setting)
+print(result.comparable, result.input_types, result.incompatibilities)
+```
+
+The check finds input types available from the dataset and accepted by **every**
+pool, then validates each pool's possible outputs against the post-encoder.
+Scalar datasets can also provide binary topology by discarding edge weights.
+All pools must use the same member of `result.input_types`; passing
+`input_type=ConnectivityType.BINARY` to `ComparisonSetting` restricts the check
+to that choice. Rejection reasons are grouped by input type, then pool.
+`load_dataset(name, connectivity_type=...)` explicitly constructs a representation;
+the existing training entry points continue to load the native default.
+
+This checks declared graph-domain compatibility. Keep the actual dataset
+instances, splits, and training rules shared when executing the comparison.
+The single-pool API is `benchmark.compatibility.validate_pool_compatibility`;
+`compatible_pools` lists compatible built-ins. The former single-pool
+`validate_comparability`/`comparable_pools` names have been replaced to distinguish
+compatibility checks from pool-set verdicts.
 
 ## Configuration and Layout
 
@@ -291,7 +343,7 @@ src/gplab/
   benchmark/      # cases, requests, run plans, identities, compatibility
   cli/            # gplab-* entrypoints
   data/           # TU profiles, loading, and split helpers
-  experiment/     # execution, records, querying, replay support
+  experiment/     # training orchestration, measurements, records, queries
   graph/          # connectivity semantics
   jobs/           # Job JSON schema and request adapter
   layers/         # GNN and pooling profiles and adapters

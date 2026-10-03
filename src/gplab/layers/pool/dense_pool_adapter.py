@@ -4,11 +4,13 @@ from torch_geometric.nn.dense import dense_diff_pool, dense_mincut_pool
 from torch_geometric.utils import to_dense_adj, to_dense_batch
 
 from gplab.data.sparse import to_sparse_batch
+
 from ..functional import dense_connect
 from .pooling_output import PoolingOutput
 
 
 class DensePoolAdapter(torch.nn.Module):
+    """Adapt dense assignments to fixed cluster slots, preserving adjacency and auxiliary losses."""
     def __init__(self, assignment_layer: torch.nn.Module, pool_method: str) -> None:
         super().__init__()
         self.assignment_layer = assignment_layer

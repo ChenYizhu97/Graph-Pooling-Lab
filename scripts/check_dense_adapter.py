@@ -1,14 +1,8 @@
 import argparse
-import sys
-from pathlib import Path
 
 import torch
 
-SRC = Path(__file__).resolve().parents[1] / "src"
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
-
-from gplab.layers.resolver import pool_resolver
+from gplab.layers.pool import load_pooling_profile
 
 
 def build_batch() -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -39,8 +33,7 @@ def inspect_pool(pool_name: str, ratio: float = 0.8) -> None:
     expected_clusters = max(1, int(avg_node_num * ratio))
 
     torch.manual_seed(7)
-    pool_module = pool_resolver(
-        pool_name,
+    pool_module = load_pooling_profile(pool_name).build(
         in_channels=x.size(-1),
         ratio=ratio,
         avg_node_num=avg_node_num,

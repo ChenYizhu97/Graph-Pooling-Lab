@@ -117,8 +117,61 @@ The referenced object must be a `PoolingProfile` containing at least one
 declared `PoolingSignature` and a builder. The builder must return a pooling
 module that implements `reset_parameters()`.
 
-Pooling signatures alone define each method's valid input/output connectivity
-domains; convolution capabilities do not alter those signatures.
+Pooling signatures form a non-empty set of `(input_type, output_type)` pairs.
+A pool may accept several input types and declare several possible outputs for
+one input. Signatures remain conditional on input: `{U -> U, W -> W}` does not
+imply `U -> W`. Convolution capabilities do not alter those declarations.
+
+For dataset type `t` and pool signature relation `S`, compatibility requires:
+
+```text
+t in {input_type for (input_type, output_type) in S}
+{output_type for (input_type, output_type) in S if input_type == t}
+    <= post_conv.connectivity_types
+```
+
+Every possible output for the actual input must be supported, not merely one
+member of that set. A topology-only pre-convolution may still pass scalar
+connectivity unchanged to pooling, as specified in the model protocol.
+
+`benchmark.compatibility` checks a single pool and lists compatible built-ins.
+`benchmark.comparability.check_comparability(pools, setting)` checks at least two
+distinct profiles under one shared `ComparisonSetting(dataset, model, input_type=None)`.
+Dataset profiles distinguish their native/default `connectivity_type` from
+available `connectivity_types`: binary provides `{U}`, scalar provides `{U, W}`.
+The scalar-to-binary projection preserves supplied edges and discards weights;
+it does not infer topology by thresholding values. Adding ones to binary edges
+does not establish semantic scalar connectivity.
+
+For dataset representations `D` and compared pools `P`, the valid inputs are:
+
+```text
+candidates = D intersect intersection(pool.input_types for pool in P)
+valid_inputs = {t in candidates where every pool's outputs(t)
+                are supported by the post-convolution}
+comparable = bool(valid_inputs)
+```
+
+`ComparabilityResult.input_types` contains these shared valid inputs;
+`incompatibilities` groups rejected alternatives by input type, then pool.
+Rejected alternatives do not invalidate another shared valid input. An explicit
+`setting.input_type` restricts the check to that representation, without fallback.
+Different pools need not produce the same graph type if the shared
+post-convolution supports all of them.
+
+All compared runs must select the **same** valid input representation.
+`load_dataset(name, connectivity_type=...)` materializes an explicit choice;
+omission uses the native default. The existing training entry points still use
+that default; a structural verdict does not change their inputs automatically.
+This is a structural verdict based on declared domains; experiments must also
+share dataset instances, concrete splits, and training/model-selection rules.
+The existing record grouping key is a protocol grouping aid, not proof that
+all these execution conditions hold.
+
+Built-in domains remain conservative, following `audits/COMPARABILITY_ALIGNMENT.md`:
+`nopool` declares `{U -> U, W -> W}`; TopK, SAG, and sparsepool declare `{U -> U}`;
+ASAP, DiffPool, MinCut, and densepool declare `{U -> W}`. Accepting an
+`edge_weight` argument alone is not evidence of a method-faithful W-input path.
 
 Dense assignment pooling methods (`mincutpool`, `diffpool`, `densepool`) follow
 one rule: input masks suppress padded input nodes before pooling, output nodes

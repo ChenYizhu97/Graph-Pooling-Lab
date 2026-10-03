@@ -1,108 +1,87 @@
-"""Minimal U/W compatibility rules for pooling benchmark construction."""
-from __future__ import annotations
-
+"""Assess a specified pool set under one shared dataset/model setting."""
+from collections.abc import Iterable
 from dataclasses import dataclass
 
+from gplab.data.profiles import get_dataset_profile
 from gplab.graph import ConnectivityType
-from gplab.layers.conv.profiles import CONV_PROFILES
-from gplab.layers.pool.profiles import POOLING_PROFILES, load_pooling_profile
+
+from .case import ModelConfig
+from .compatibility import pool_compatibility_error
+
+
+@dataclass(frozen=True)
+class ComparisonSetting:
+    """Shared dataset and complete model configuration for a pool comparison.
+
+    ``input_type=None`` searches all representations the dataset can provide;
+    an explicit type restricts the comparison to that shared representation.
+    This describes the structural setting; callers must also hold dataset
+    instances, splits, and training rules fixed when executing the experiments.
+    """
+    dataset: str
+    model: ModelConfig
+    input_type: ConnectivityType | None = None
+
+    def __post_init__(self) -> None:
+        if self.input_type is not None and not isinstance(self.input_type, ConnectivityType):
+            raise TypeError("input_type must be a ConnectivityType or None.")
 
 
 @dataclass(frozen=True)
 class ComparabilityResult:
-    input_type: ConnectivityType
-    output_type: ConnectivityType
+    """Shared valid inputs and rejected alternatives for this pool set/setting.
+
+    Every pool must use the same member of ``input_types``. Incompatibilities
+    are grouped by rejected input type, then pool; they can be nonempty even
+    when another input makes the comparison valid.
+    """
+    pools: tuple[str, ...]
+    setting: ComparisonSetting
+    input_types: frozenset[ConnectivityType]
+    incompatibilities: dict[ConnectivityType, dict[str, str]]
+
+    @property
+    def comparable(self) -> bool:
+        return bool(self.input_types)
 
 
-def resolve_dataset_connectivity_type(dataset) -> ConnectivityType:
-    """Resolve U/W from explicit semantic metadata, never tensor presence alone."""
-    declared_type = getattr(dataset, "connectivity_type", None)
-    try:
-        connectivity_type = ConnectivityType(declared_type)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(
-            "Dataset must declare connectivity_type as 'binary' or 'scalar'; "
-            "edge_weight tensor presence does not establish graph semantics."
-        ) from exc
-
-    if connectivity_type is ConnectivityType.SCALAR:
-        for graph in dataset:
-            edge_weight = getattr(graph, "edge_weight", None)
-            if (
-                edge_weight is None
-                or edge_weight.dim() != 1
-                or edge_weight.numel() != graph.edge_index.size(1)
-            ):
-                raise ValueError(
-                    "A scalar-connectivity dataset must expose one semantic edge_weight value per edge."
-                )
-    return connectivity_type
-
-
-def _check_comparability(
-    *,
-    dataset_type: ConnectivityType,
-    pool_name: str,
-    pre_conv: str,
-    post_conv: str,
-) -> tuple[ComparabilityResult | None, str | None]:
-    pre_conv_profile = CONV_PROFILES[pre_conv]
-    # Scalar values may bypass the pre-conv, but every pre-conv must be able to
-    # process binary topology before the unchanged values reach pooling.
-    if not pre_conv_profile.can_consume(ConnectivityType.BINARY):
-        return None, (
-            f"Pre-pooling encoder '{pre_conv}' cannot consume "
-            "binary graph topology."
-        )
-
-    profile = load_pooling_profile(pool_name)
-    output_type = profile.output_type_for(dataset_type)
-    if output_type is None:
-        return None, (
-            f"Pooling profile '{pool_name}' is not declared valid for "
-            f"{dataset_type.value}-valued input connectivity."
-        )
-    if not CONV_PROFILES[post_conv].can_consume(output_type):
-        return None, (
-            f"{pool_name} produces {output_type.value}-valued pooled connectivity, "
-            f"but post-pooling encoder '{post_conv}' cannot consume scalar edge values."
-        )
-    return ComparabilityResult(dataset_type, output_type), None
-
-
-def validate_comparability(
-    *,
-    dataset_type: ConnectivityType,
-    pool_name: str,
-    pre_conv: str,
-    post_conv: str,
+def check_comparability(
+    pools: Iterable[str], setting: ComparisonSetting,
 ) -> ComparabilityResult:
-    result, error = _check_comparability(
-        dataset_type=dataset_type,
-        pool_name=pool_name,
-        pre_conv=pre_conv,
-        post_conv=post_conv,
-    )
-    if error is not None:
-        raise ValueError(error)
-    assert result is not None
-    return result
+    """Check all specified pools under the same setting without loading a dataset.
 
-
-def comparable_pools(
-    *,
-    dataset_type: ConnectivityType,
-    pre_conv: str,
-    post_conv: str,
-) -> tuple[str, ...]:
-    comparable = []
-    for pool_name in POOLING_PROFILES:
-        result, _ = _check_comparability(
-            dataset_type=dataset_type,
-            pool_name=pool_name,
-            pre_conv=pre_conv,
-            post_conv=post_conv,
-        )
-        if result is not None:
-            comparable.append(pool_name)
-    return tuple(comparable)
+    A common input must be available from the dataset and accepted by every
+    pool. For that input, every possible pool output must be consumable by the
+    post-encoder. Individually compatible but disjoint inputs do not suffice.
+    Pool-size controls are experiment-specific, not a universal condition here.
+    """
+    if isinstance(pools, str):
+        raise TypeError("pools must be a collection of profile names, not one string.")
+    names = tuple(dict.fromkeys(pools))
+    if len(names) < 2:
+        raise ValueError("A comparison requires at least two distinct pooling profiles.")
+    dataset_types = get_dataset_profile(setting.dataset).connectivity_types
+    if setting.input_type is not None:
+        if setting.input_type not in dataset_types:
+            raise ValueError(f"Dataset '{setting.dataset}' cannot provide {setting.input_type.value} connectivity.")
+        dataset_types = frozenset({setting.input_type})
+    input_types = set()
+    incompatibilities = {}
+    # Testing all pools against each available type computes the intersection
+    # while retaining useful per-pool reasons for rejected representations.
+    for dataset_type in sorted(dataset_types, key=lambda value: value.value):
+        errors = {}
+        for name in names:
+            error = pool_compatibility_error(
+                dataset_type=dataset_type,
+                pool_name=name,
+                pre_conv=setting.model.pre_conv,
+                post_conv=setting.model.post_conv,
+            )
+            if error is not None:
+                errors[name] = error
+        if errors:
+            incompatibilities[dataset_type] = errors
+        else:
+            input_types.add(dataset_type)
+    return ComparabilityResult(names, setting, frozenset(input_types), incompatibilities)

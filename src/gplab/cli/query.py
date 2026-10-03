@@ -1,5 +1,6 @@
+from typing import Annotated, Optional
+
 import typer
-from typing_extensions import Annotated, Optional
 
 from gplab.cli.output import build_error_payload, emit_json, validate_output_format
 from gplab.experiment.query import (

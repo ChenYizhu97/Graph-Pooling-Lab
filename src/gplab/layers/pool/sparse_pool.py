@@ -12,6 +12,7 @@ from .pooling_output import PoolingOutput
 
 
 class SparsePooling(torch.nn.Module):
+    """Gate nodes by a learned affine feature score and retain their induced subgraphs."""
     def __init__(
         self,
         in_channels: int,
@@ -60,6 +61,7 @@ class SparsePooling(torch.nn.Module):
 
 
 class SelectSparse(torch.nn.Module):
+    """Compute one activated linear score per node and select top scores within each graph."""
     def __init__(
         self,
         in_channels: int,

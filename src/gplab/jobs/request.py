@@ -22,6 +22,7 @@ def _infer_error_field(message: str) -> str | None:
 
 
 def request_from_job(job: dict) -> BenchmarkRequest:
+    """Validate JSON shape and domain rules, preserving field information on errors."""
     normalized = normalize_job_shape(job)
     try:
         return BenchmarkRequest.from_mapping(normalized)

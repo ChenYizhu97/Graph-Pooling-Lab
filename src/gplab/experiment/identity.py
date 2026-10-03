@@ -3,6 +3,7 @@ import json
 
 
 def compute_record_id(record: dict) -> str:
+    """Hash canonical JSON content, excluding any existing record_id."""
     payload = {key: value for key, value in record.items() if key != "record_id"}
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha1(encoded).hexdigest()[:12]

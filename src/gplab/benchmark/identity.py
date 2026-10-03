@@ -13,17 +13,16 @@ def _hash_payload(payload: dict) -> str:
 
 
 def compute_case_id(case: BenchmarkCase) -> str:
+    """Hash the full case, including the pooling method and requested seed policy."""
     return _hash_payload(case.to_mapping())
 
 
 def benchmark_payload(case: BenchmarkCase, *, resolved_seeds: Optional[list[int]] = None) -> dict:
+    """Build comparison settings, excluding pool name and using resolved seeds if supplied."""
     training = case.training.to_mapping()
     if resolved_seeds is not None:
-        training = {
-            key: value
-            for key, value in training.items()
-            if key != "seeds"
-        }
+        # Auto and list policies are comparable when they resolve to the same
+        # ordered seeds; the policy used to obtain them should not split groups.
         training["seeds"] = [int(seed) for seed in resolved_seeds]
 
     return {
@@ -42,6 +41,7 @@ def compute_benchmark_key(case: BenchmarkCase, *, resolved_seeds: Optional[list[
 
 
 def compute_record_benchmark_key(record: dict) -> str:
+    """Group records by shared protocol and resolved seeds, independent of pool name."""
     case = BenchmarkCase.from_mapping(record["case"])
     seeds = [int(seed) for seed in record["run_plan"]["seeds"]]
     return compute_benchmark_key(case, resolved_seeds=seeds)

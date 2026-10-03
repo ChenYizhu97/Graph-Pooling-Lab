@@ -3,20 +3,21 @@ from typing import Optional
 import torch
 import torch.nn.functional as F
 from torch import Tensor
-from torch_geometric.data import Data
-from torch_geometric.nn import BatchNorm, LayerNorm, MLP
-from torch_geometric.nn.resolver import activation_resolver
 from torch.utils.checkpoint import checkpoint
+from torch_geometric.data import Data
+from torch_geometric.nn import MLP, BatchNorm, LayerNorm
+from torch_geometric.nn.resolver import activation_resolver
 
 from gplab.benchmark.case import ModelConfig
 from gplab.graph import ConnectivityType
 from gplab.layers.conv.profiles import CONV_PROFILES
 from gplab.layers.functional import readout
-from gplab.layers.pool.profiles import load_pooling_profile
 from gplab.layers.pool.pooling_output import PoolingOutput, validate_pooling_output
+from gplab.layers.pool.profiles import load_pooling_profile
 
 
 class GraphClassifier(torch.nn.Module):
+    """Shared one-pool backbone returning log probabilities and optional auxiliary loss."""
     def __init__(
         self,
         n_node_features: int,
@@ -91,6 +92,8 @@ class GraphClassifier(torch.nn.Module):
         edge_weight: Optional[Tensor],
     ) -> tuple[Tensor, Optional[Tensor]]:
         x = self.pre_gnn(x)
+        # A topology-only pre-conv may ignore scalar values locally; keep the
+        # original weights available to pooling instead of discarding them.
         if edge_weight is not None and self.pre_conv_can_consume_edge_weight:
             x = self.pre_conv(x, edge_index, edge_weight=edge_weight)
         else:
@@ -100,6 +103,8 @@ class GraphClassifier(torch.nn.Module):
         before_pool = readout(x=x, batch=batch) if self.variant == "sum" else None
         pool_output = self._apply_pool(x, edge_index, batch, edge_weight)
 
+        # The post-conv must consume all connectivity produced by pooling;
+        # falling back to topology alone would change the method being compared.
         if pool_output.edge_weight is None:
             x = self.post_conv(pool_output.x, pool_output.edge_index)
         elif self.post_conv_can_consume_edge_weight:
@@ -145,6 +150,7 @@ class GraphClassifier(torch.nn.Module):
         batch: Tensor,
         edge_weight: Optional[Tensor],
     ) -> PoolingOutput:
+        """Apply the pool or identity path; validate a custom output on its first use."""
         if self.pool_module is None:
             return PoolingOutput(
                 x=x,

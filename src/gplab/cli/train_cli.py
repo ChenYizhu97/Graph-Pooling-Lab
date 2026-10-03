@@ -1,17 +1,18 @@
+from typing import Annotated, Optional
+
 import toml
 import typer
-from typing_extensions import Annotated, Optional
 
 from gplab.cli.options import resolve_seed_options
-from gplab.cli.request import build_cli_request
-from gplab.experiment.train_result import execute_train_request
-from gplab.paths import default_config_path
 from gplab.cli.output import (
     build_error_payload,
     emit_json,
     redirect_stdout_for_json,
     validate_output_format,
 )
+from gplab.cli.request import build_cli_request
+from gplab.experiment.train_result import execute_train_request
+from gplab.paths import default_config_path
 
 app = typer.Typer(pretty_exceptions_enable=False)
 

@@ -16,16 +16,12 @@ def build_train_result(
     *,
     context: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
-    context_payload: dict[str, Any] = {}
-    if context:
-        context_payload.update(context)
-
     return {
         "ok": True,
         "kind": "train_result",
         "record": record,
         "summary": summarize_record(record),
-        "context": context_payload,
+        "context": dict(context or {}),
     }
 
 
@@ -43,6 +39,7 @@ def execute_train_request(
     emit_text: bool,
     context: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
+    """Run one request, optionally persist its record, and build the CLI response."""
     record = run_experiment(request, emit_text=emit_text)
     persist_record(record, request.execution.log_file)
     payload = build_train_result(record, context=context)

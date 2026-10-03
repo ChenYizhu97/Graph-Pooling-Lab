@@ -5,11 +5,11 @@ import torch
 from torch_geometric.data import Dataset
 from torch_geometric.loader import DataLoader
 
-
 _RUNTIME_THREADS_CONFIGURED = False
 
 
 def configure_runtime_threads() -> None:
+    """Use one compute thread for small TU graphs; configure interop once if still possible."""
     global _RUNTIME_THREADS_CONFIGURED
     if _RUNTIME_THREADS_CONFIGURED:
         return
@@ -26,14 +26,9 @@ def configure_runtime_threads() -> None:
         pass
     _RUNTIME_THREADS_CONFIGURED = True
 
-    # If stricter determinism is required later, consider enabling:
-    # torch.use_deterministic_algorithms(True)
-    # torch.backends.cuda.matmul.allow_tf32 = False
-    # torch.backends.cudnn.allow_tf32 = False
-    # and setting env var CUBLAS_WORKSPACE_CONFIG=:4096:8 before launching Python.
 
-
-def set_np_and_torch(seed: int = 0) -> None:
+def seed_everything(seed: int = 0) -> None:
+    """Seed Python, NumPy, and PyTorch and select deterministic cuDNN behavior."""
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
@@ -44,26 +39,21 @@ def set_np_and_torch(seed: int = 0) -> None:
     torch.backends.cudnn.benchmark = False
 
 
-def seed_worker(_worker_id: int) -> None:
-    worker_seed = torch.initial_seed() % 2**32
-    np.random.seed(worker_seed)
-    random.seed(worker_seed)
-
-
-def generate_loader(
+def build_loader(
     dataset: Dataset,
     batch_size: int,
     shuffle: bool = False,
     seed: int = 0,
 ) -> DataLoader:
+    """Build a zero-worker loader with an independent generator for repeatable shuffling."""
+    # Isolate loader randomness from model initialization and stochastic layers,
+    # so their random draws do not change the seeded training shuffle.
     generator = torch.Generator()
     generator.manual_seed(seed)
-    data_loader = DataLoader(
+    return DataLoader(
         dataset=dataset,
         batch_size=batch_size,
         shuffle=shuffle,
         num_workers=0,
-        worker_init_fn=seed_worker,
         generator=generator,
     )
-    return data_loader

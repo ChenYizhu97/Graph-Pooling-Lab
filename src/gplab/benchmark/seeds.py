@@ -10,6 +10,7 @@ def resolve_seeds(
     seed_values: list[int] | None = None,
     allow_duplicate_seeds: bool = False,
 ) -> list[int]:
+    """Return explicit seeds or unique positive seeds drawn from a local NumPy generator."""
     if runs <= 0:
         return []
 

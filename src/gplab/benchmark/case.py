@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
 import math
+from dataclasses import asdict, dataclass, replace
 from typing import Optional
 
 from gplab.data.profiles import get_dataset_profile
@@ -16,6 +16,7 @@ from gplab.utils.validation import (
 
 @dataclass(frozen=True)
 class ModelConfig:
+    """Validated backbone widths and independent pre/post-pooling encoder choices."""
     hidden_features: int
     nonlinearity: str
     p_dropout: float
@@ -77,6 +78,7 @@ class ModelConfig:
 
 @dataclass(frozen=True)
 class PoolConfig:
+    """Pooling profile and reduction settings that contribute to benchmark identity."""
     name: str
     ratio: float
     nonlinearity: str = "tanh"
@@ -101,6 +103,7 @@ class PoolConfig:
 
 @dataclass(frozen=True)
 class SplitConfig:
+    """Positive train/validation fractions; the remaining fraction is the test split."""
     train: float
     val: float
 
@@ -137,6 +140,7 @@ class SplitConfig:
 
 @dataclass(frozen=True)
 class SeedPolicy:
+    """Choose generated or explicit run seeds, with opt-in duplicate replay."""
     mode: str
     base: int
     values: Optional[tuple[int, ...]]
@@ -179,6 +183,7 @@ class SeedPolicy:
 
 @dataclass(frozen=True)
 class TrainingConfig:
+    """Training budget, optimizer settings, split fractions, and run seed policy."""
     runs: int
     lr: float
     batch_size: int
@@ -228,6 +233,7 @@ class TrainingConfig:
 
 @dataclass(frozen=True)
 class BenchmarkCase:
+    """One comparable experiment definition, excluding execution-only settings."""
     dataset: str
     pool: PoolConfig
     model: ModelConfig
@@ -251,23 +257,28 @@ class BenchmarkCase:
 
     @classmethod
     def from_record(cls, record: dict) -> BenchmarkCase:
+        """Rebuild a replay case from the original configuration and actual run seeds.
+
+        ``case.training.seeds`` stores the requested policy (possibly ``auto``
+        with no explicit values); ``run_plan.seeds`` stores the resolved seeds.
+        Replay uses those values directly instead of regenerating them from base.
+        The recorded runs normally already equal len(seeds); overriding runs
+        preserves the existing behavior of taking the resolved plan's run count.
+        ``replace`` copies the frozen configs while retaining all other settings.
+        """
         case = cls.from_mapping(record["case"])
         seeds = tuple(int(seed) for seed in record["run_plan"]["seeds"])
-        return cls(
-            dataset=case.dataset,
-            pool=case.pool,
-            model=case.model,
-            training=TrainingConfig(
+        return replace(
+            case,
+            training=replace(
+                case.training,
                 runs=len(seeds),
-                lr=case.training.lr,
-                batch_size=case.training.batch_size,
-                patience=case.training.patience,
-                epochs=case.training.epochs,
-                split=case.training.split,
                 seeds=SeedPolicy(
                     mode="list",
+                    # Retain the original base as configuration metadata; list mode ignores it.
                     base=case.training.seeds.base,
                     values=seeds,
+                    # Recorded duplicate runs must remain replayable without deduplication.
                     allow_duplicates=len(set(seeds)) != len(seeds),
                 ),
             ),

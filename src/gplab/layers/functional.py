@@ -7,6 +7,7 @@ from torch_geometric.utils import cumsum, scatter
 
 
 def readout(x: Tensor, batch: Optional[Tensor] = None, size: Optional[int] = None) -> Tensor:
+    """Concatenate graph-wise sum and max features along the channel axis."""
     pooled_add = global_add_pool(x=x, batch=batch, size=size)
     pooled_max = global_max_pool(x=x, batch=batch, size=size)
     return torch.concat((pooled_add, pooled_max), dim=-1)
@@ -18,6 +19,7 @@ def dense_connect(
     assignment: Tensor,
     mask: Optional[Tensor],
 ) -> tuple[Tensor, Tensor]:
+    """Coarsen features and adjacency with softmax assignments, masking padded input nodes."""
     if x.dim() == 2:
         x = x.unsqueeze(0)
     if adj.dim() == 2:
@@ -45,7 +47,10 @@ def topk(
     min_score: Optional[float] = None,
     tol: float = 1e-7,
 ) -> Tensor:
+    """Select per-graph high scores; ratio >= 1 is a count and min_score overrides ratio."""
     if min_score is not None:
+        # Lower an overly high threshold below each graph's maximum score so
+        # threshold selection does not discard every node in a graph.
         scores_max = scatter(x, batch, reduce="max")[batch] - tol
         scores_min = scores_max.clamp(max=min_score)
         return (x > scores_min).nonzero().view(-1)
@@ -60,6 +65,8 @@ def topk(
 
         x, x_perm = torch.sort(x.view(-1), descending=True)
         batch = batch[x_perm]
+        # Regroup graphs without destroying the descending score order within
+        # each graph; stability is essential for the per-graph top-k mask below.
         batch, batch_perm = torch.sort(batch, descending=False, stable=True)
 
         arange = torch.arange(x.size(0), dtype=torch.long, device=x.device)

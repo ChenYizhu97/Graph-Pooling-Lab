@@ -4,13 +4,14 @@ from dataclasses import dataclass
 from typing import Optional
 
 from .case import BenchmarkCase
-from .identity import compute_case_id
 from .execution import ExecutionOptions
+from .identity import compute_case_id
 from .plan import RunPlan
 
 
 @dataclass(frozen=True)
 class BenchmarkRequest:
+    """A case plus execution settings and an optional recorded plan for replay."""
     case: BenchmarkCase
     execution: ExecutionOptions
     fixed_run_plan: Optional[RunPlan] = None
@@ -29,6 +30,11 @@ class BenchmarkRequest:
         *,
         replay_log_file: Optional[str] = None,
     ) -> BenchmarkRequest:
+        """Reuse recorded split indices as well as seeds, bypassing split generation.
+
+        The fixed plan retains the source case_id. The replay case can have a
+        different ID because its seed policy has changed from auto to list.
+        """
         return cls(
             case=BenchmarkCase.from_record(record),
             execution=ExecutionOptions.from_record(record, log_file=replay_log_file),

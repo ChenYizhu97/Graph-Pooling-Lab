@@ -8,6 +8,7 @@ from torch_geometric.loader import DataLoader
 
 @dataclass(frozen=True)
 class EvaluationResult:
+    """Graph-averaged classification and auxiliary losses, with classification accuracy."""
     accuracy: float
     classification_loss: float
     auxiliary_loss: float
@@ -20,6 +21,7 @@ def train_epoch(
     loss_fn: Callable[[Tensor, Tensor], Tensor],
     device: torch.device,
 ) -> float:
+    """Optimize classification plus optional pool auxiliary loss and return graph-mean loss."""
     model.train()
     weighted_loss = 0.0
     sample_count = 0
@@ -52,6 +54,12 @@ def evaluate_epoch(
     loss_fn: Callable[[Tensor, Tensor], Tensor],
     device: torch.device,
 ) -> EvaluationResult:
+    """Measure graph-averaged losses and accuracy without updating model state.
+
+    loss_fn must return a batch mean. Weight each batch by its graph count so
+    a smaller final batch does not receive the same weight as a full batch.
+    Keep auxiliary loss separate because it does not select the checkpoint.
+    """
     model.eval()
     weighted_classification_loss = 0.0
     weighted_auxiliary_loss = 0.0

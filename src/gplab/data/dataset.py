@@ -1,11 +1,14 @@
 import numpy as np
 from torch_geometric.data import Dataset
 
+from gplab.graph import ConnectivityType
+
 from .profiles import get_dataset_profile
 
 
-def load_dataset(dataset: str) -> Dataset:
-    return get_dataset_profile(dataset).build()
+def load_dataset(dataset: str, connectivity_type: ConnectivityType | None = None) -> Dataset:
+    """Build a declared representation, defaulting to the dataset's native type."""
+    return get_dataset_profile(dataset).build(connectivity_type)
 
 
 def build_split_indices(
@@ -14,6 +17,7 @@ def build_split_indices(
     split_train: float = 0.8,
     split_val: float = 0.1,
 ) -> dict:
+    """Shuffle with a local seed and slice contiguous train/validation/test partitions."""
     if dataset_size <= 0:
         raise ValueError("dataset_size must be positive")
     if not (0.0 < split_train < 1.0) or not (0.0 < split_val < 1.0):
@@ -38,6 +42,7 @@ def split_dataset(
     dataset: Dataset,
     split_indices: dict,
 ):
+    """Select datasets in the recorded index order without drawing new random splits."""
     train_dataset = dataset[split_indices["train"]]
     val_dataset = dataset[split_indices["val"]]
     test_dataset = dataset[split_indices["test"]]

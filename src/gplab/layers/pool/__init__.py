@@ -1,7 +1,4 @@
 from .dense_pool_adapter import DensePoolAdapter
-from .pyg_adapters import ASAPoolAdapter, TopKPoolAdapter
-from .sag_pool import SAGPooling
-from .sparse_pool import SparsePooling
 from .pooling_output import PoolingOutput, validate_pooling_output
 from .profiles import (
     POOLING_PROFILES,
@@ -10,6 +7,9 @@ from .profiles import (
     load_pooling_profile,
     validate_pooling_profile_name,
 )
+from .pyg_adapters import ASAPoolAdapter, TopKPoolAdapter
+from .sag_pool import SAGPooling
+from .sparse_pool import SparsePooling
 
 __all__ = [
     "ASAPoolAdapter",

@@ -9,6 +9,7 @@ from .pooling_output import PoolingOutput
 
 
 class TopKPoolAdapter(torch.nn.Module):
+    """Translate PyG TopK output and edge_attr into the GPLab scalar-weight contract."""
     def __init__(
         self,
         in_channels: int,
@@ -51,6 +52,7 @@ class TopKPoolAdapter(torch.nn.Module):
 
 
 class ASAPoolAdapter(torch.nn.Module):
+    """Expose ASAP coarsened scalar weights, starting binary graphs with unit edge weights."""
     def __init__(self, in_channels: int, ratio: float) -> None:
         super().__init__()
         self.asa_pool = ASAPooling(in_channels, ratio=ratio)

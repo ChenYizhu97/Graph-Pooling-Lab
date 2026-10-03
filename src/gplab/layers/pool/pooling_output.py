@@ -8,6 +8,7 @@ from torch import Tensor
 
 @dataclass
 class PoolingOutput:
+    """Pooled graph plus optional selected-node indices, gates, and training auxiliary loss."""
     x: Tensor
     edge_index: Tensor
     batch: Tensor
@@ -40,6 +41,7 @@ def _validate_optional_tensor(
 
 
 def validate_pooling_output(output, pool_name: str) -> None:
+    """Check the pool boundary shapes, tensor types, and shared device."""
     if not isinstance(output, PoolingOutput):
         raise TypeError(
             f"Pooling method '{pool_name}' must return PoolingOutput, "

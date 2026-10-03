@@ -1,4 +1,8 @@
-from .defaults import AUTOMATION_EXECUTION_DEFAULTS, AUTOMATION_MODEL_DEFAULTS, AUTOMATION_TRAINING_DEFAULTS
+from .defaults import (
+    AUTOMATION_EXECUTION_DEFAULTS,
+    AUTOMATION_MODEL_DEFAULTS,
+    AUTOMATION_TRAINING_DEFAULTS,
+)
 from .io import load_job_file, load_job_text
 from .request import request_from_job
 

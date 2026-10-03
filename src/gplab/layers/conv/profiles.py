@@ -8,12 +8,12 @@ from torch_geometric.nn import GCNConv, GINConv, GraphConv
 
 from gplab.graph import ConnectivityType
 
-
 ConvFactory = Callable[[int, int], nn.Module]
 
 
 @dataclass(frozen=True)
 class ConvProfile:
+    """Convolution constructor and the connectivity domains its forward method consumes."""
     factory: ConvFactory
     connectivity_types: frozenset[ConnectivityType]
 

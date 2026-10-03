@@ -1,8 +1,0 @@
-numpy
-rich
-toml
-torch
-torch-geometric
-tqdm
-typer
-typing_extensions

@@ -1,7 +1,7 @@
 """Built-in pooling profiles and their construction paths."""
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from functools import partial
 from importlib import import_module
@@ -19,7 +19,6 @@ from .pyg_adapters import ASAPoolAdapter, TopKPoolAdapter
 from .sag_pool import SAGPooling
 from .sparse_pool import SparsePooling
 
-
 PoolBuilder = Callable[
     [int, float, Optional[float], str | Callable],
     Optional[torch.nn.Module],
@@ -28,23 +27,34 @@ PoolBuilder = Callable[
 
 @dataclass(frozen=True)
 class PoolingSignature:
+    """One declared input-to-output connectivity transformation."""
     input_type: ConnectivityType
     output_type: ConnectivityType
+
+    def __post_init__(self) -> None:
+        if not all(isinstance(value, ConnectivityType) for value in (self.input_type, self.output_type)):
+            raise TypeError("PoolingSignature domains must be ConnectivityType values.")
 
 
 @dataclass(frozen=True)
 class PoolingProfile:
+    """Pool constructor and a non-empty relation of valid input/output graph types.
+
+    Signatures are alternatives, not a Cartesian product of independent input
+    and output sets. Several outputs may be declared for the same input; all
+    must be supported downstream. Tuple declarations remain accepted for plugins.
+    """
     builder: PoolBuilder
-    signatures: tuple[PoolingSignature, ...]
+    signatures: Collection[PoolingSignature]
 
     def __post_init__(self) -> None:
         if not callable(self.builder):
             raise TypeError("PoolingProfile.builder must be callable.")
         if not self.signatures:
             raise ValueError("PoolingProfile.signatures must be non-empty.")
-        input_types = [signature.input_type for signature in self.signatures]
-        if len(input_types) != len(set(input_types)):
-            raise ValueError("PoolingProfile cannot declare multiple outputs for one input type.")
+        if any(not isinstance(signature, PoolingSignature) for signature in self.signatures):
+            raise TypeError("PoolingProfile.signatures must contain PoolingSignature values.")
+        object.__setattr__(self, "signatures", frozenset(self.signatures))
 
     def build(
         self,
@@ -62,17 +72,20 @@ class PoolingProfile:
             )
         return pool
 
-    def output_type_for(
-        self,
-        input_type: ConnectivityType,
-    ) -> Optional[ConnectivityType]:
-        return next(
-            (
-                signature.output_type
-                for signature in self.signatures
-                if signature.input_type is input_type
-            ),
-            None,
+    @property
+    def input_types(self) -> frozenset[ConnectivityType]:
+        """Input domains explicitly declared by this implementation's profile."""
+        return frozenset(signature.input_type for signature in self.signatures)
+
+    def output_types_for(self, input_type: ConnectivityType) -> frozenset[ConnectivityType]:
+        """Return all outputs for this input; an empty set means unsupported input.
+
+        Filtering by input matters: {U -> U, W -> W} on a U dataset requires
+        only U support downstream, even though the pool can also emit W elsewhere.
+        """
+        return frozenset(
+            signature.output_type for signature in self.signatures
+            if signature.input_type is input_type
         )
 
 
@@ -131,6 +144,8 @@ def _dense_pool(
 ) -> torch.nn.Module:
     if avg_node_num is None:
         raise ValueError("avg_node_num is required for dense pooling methods.")
+    # Dense methods share one assignment width based on dataset-average size,
+    # not a per-graph retained-node count. Even small graphs keep every slot.
     cluster_count = max(1, int(avg_node_num * ratio))
     assignment_layer = (
         DenseGCNConv(in_channels, cluster_count)
@@ -143,6 +158,8 @@ def _dense_pool(
 _BINARY = ConnectivityType.BINARY
 _SCALAR = ConnectivityType.SCALAR
 
+# Declared domains follow audits/COMPARABILITY_ALIGNMENT.md. Accepting an
+# edge_weight argument alone does not establish a method-faithful scalar domain.
 POOLING_PROFILES: Mapping[str, PoolingProfile] = MappingProxyType({
     "nopool": PoolingProfile(
         _no_pool,
@@ -192,6 +209,7 @@ def validate_pooling_profile_name(name: str) -> bool:
 
 
 def load_pooling_profile(name: str) -> PoolingProfile:
+    """Resolve a built-in or module:attribute profile and validate the plugin contract."""
     profile = POOLING_PROFILES.get(name)
     if profile is not None:
         return profile

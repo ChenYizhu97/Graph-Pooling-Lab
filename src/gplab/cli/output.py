@@ -1,10 +1,9 @@
-from contextlib import nullcontext, redirect_stdout
 import json
 import sys
+from contextlib import nullcontext, redirect_stdout
 from typing import Any, Optional
 
 import typer
-
 
 OUTPUT_FORMATS = ("text", "json")
 
@@ -23,12 +22,14 @@ def emit_json(payload: dict[str, Any]) -> None:
 
 
 def redirect_stdout_for_json(enabled: bool):
+    """Reserve stdout for the response by routing incidental prints to stderr."""
     if enabled:
         return redirect_stdout(sys.stderr)
     return nullcontext()
 
 
 def build_error_payload(kind: str, exc: Exception, details: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    """Translate handled failures into the shared machine-readable error envelope."""
     error_type = "runtime_error"
     if isinstance(exc, typer.BadParameter) or isinstance(exc, ValueError):
         error_type = "config_error"

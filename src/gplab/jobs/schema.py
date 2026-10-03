@@ -1,11 +1,14 @@
-from copy import deepcopy
 import math
+from copy import deepcopy
 from typing import Optional
 
 from gplab.utils.validation import validate_seed_mode_value
 
-from .defaults import AUTOMATION_EXECUTION_DEFAULTS, AUTOMATION_MODEL_DEFAULTS, AUTOMATION_TRAINING_DEFAULTS
-
+from .defaults import (
+    AUTOMATION_EXECUTION_DEFAULTS,
+    AUTOMATION_MODEL_DEFAULTS,
+    AUTOMATION_TRAINING_DEFAULTS,
+)
 
 JOB_TOP_LEVEL_FIELDS = {"case", "execution"}
 JOB_REQUIRED_TOP_LEVEL_FIELDS = {"case"}
@@ -25,6 +28,7 @@ EXECUTION_FIELDS = set(AUTOMATION_EXECUTION_DEFAULTS)
 
 
 class JobSchemaError(ValueError):
+    """JSON boundary error carrying field-level details for automation clients."""
     def __init__(
         self,
         message: str,
@@ -150,7 +154,20 @@ def _normalize_float(value, *, field_name: str) -> float:
     return normalized
 
 
+def _normalize_fields(payload: dict, label: str, validators: dict) -> dict:
+    """Validate flat fields in declaration order, retaining fully qualified error paths."""
+    return {name: validate(payload[name], field_name=f"{label}.{name}")
+            for name, validate in validators.items()}
+
+
 def normalize_job_shape(job: dict) -> dict:
+    """Fill defaults and enforce JSON types before domain configuration is built.
+
+    Config constructors coerce values, so this boundary must first reject e.g.
+    booleans as numbers and strings as integers. Domain validation then checks
+    ranges and cross-field constraints. Deep copies isolate mutable defaults;
+    nested split/seed defaults are merged separately to support partial objects.
+    """
     raw = require_mapping(job, label="job")
     _reject_unknown_fields(raw, allowed=JOB_TOP_LEVEL_FIELDS, label="top-level")
     _require_keys(raw, required=JOB_REQUIRED_TOP_LEVEL_FIELDS, label="top-level")
@@ -202,68 +219,41 @@ def normalize_job_shape(job: dict) -> dict:
     normalized = {
         "case": {
             "dataset": _require_string(case["dataset"], field_name="case.dataset"),
-            "pool": {
-                "name": _require_string(pool["name"], field_name="case.pool.name"),
-                "ratio": _normalize_float(pool["ratio"], field_name="case.pool.ratio"),
-                "nonlinearity": _require_string(
-                    pool["nonlinearity"],
-                    field_name="case.pool.nonlinearity",
-                ),
-            },
-            "model": {
-                "hidden_features": _normalize_int(
-                    model["hidden_features"],
-                    field_name="case.model.hidden_features",
-                ),
-                "nonlinearity": _require_string(
-                    model["nonlinearity"],
-                    field_name="case.model.nonlinearity",
-                ),
-                "p_dropout": _normalize_float(model["p_dropout"], field_name="case.model.p_dropout"),
-                "pre_conv": _require_string(model["pre_conv"], field_name="case.model.pre_conv"),
-                "post_conv": _require_string(model["post_conv"], field_name="case.model.post_conv"),
-                "pre_gnn": _normalize_int_list(model["pre_gnn"], field_name="case.model.pre_gnn"),
-                "post_gnn": _normalize_int_list(model["post_gnn"], field_name="case.model.post_gnn"),
-                "variant": _require_string(model["variant"], field_name="case.model.variant"),
-            },
+            "pool": _normalize_fields(pool, "case.pool", {
+                "name": _require_string, "ratio": _normalize_float,
+                "nonlinearity": _require_string,
+            }),
+            "model": _normalize_fields(model, "case.model", {
+                "hidden_features": _normalize_int, "nonlinearity": _require_string,
+                "p_dropout": _normalize_float, "pre_conv": _require_string,
+                "post_conv": _require_string, "pre_gnn": _normalize_int_list,
+                "post_gnn": _normalize_int_list, "variant": _require_string,
+            }),
             "training": {
-                "runs": _normalize_int(training["runs"], field_name="case.training.runs"),
-                "lr": _normalize_float(training["lr"], field_name="case.training.lr"),
-                "batch_size": _normalize_int(
-                    training["batch_size"],
-                    field_name="case.training.batch_size",
-                ),
-                "patience": _normalize_int(training["patience"], field_name="case.training.patience"),
-                "epochs": _normalize_int(training["epochs"], field_name="case.training.epochs"),
-                "split": {
-                    "train": _normalize_float(split["train"], field_name="case.training.split.train"),
-                    "val": _normalize_float(split["val"], field_name="case.training.split.val"),
-                },
+                **_normalize_fields(training, "case.training", {
+                    "runs": _normalize_int, "lr": _normalize_float,
+                    "batch_size": _normalize_int, "patience": _normalize_int,
+                    "epochs": _normalize_int,
+                }),
+                "split": _normalize_fields(split, "case.training.split", {
+                    "train": _normalize_float, "val": _normalize_float,
+                }),
                 "seeds": {
                     "mode": _require_string(seeds["mode"], field_name="case.training.seeds.mode"),
                     "base": _normalize_int(seeds["base"], field_name="case.training.seeds.base"),
-                    "values": None
-                    if seeds["values"] is None
-                    else _normalize_int_list(
-                        seeds["values"],
-                        field_name="case.training.seeds.values",
-                        allow_empty=False,
+                    "values": None if seeds["values"] is None else _normalize_int_list(
+                        seeds["values"], field_name="case.training.seeds.values", allow_empty=False,
                     ),
                     "allow_duplicates": _normalize_bool(
-                        seeds["allow_duplicates"],
-                        field_name="case.training.seeds.allow_duplicates",
+                        seeds["allow_duplicates"], field_name="case.training.seeds.allow_duplicates",
                     ),
                 },
             },
         },
-        "execution": {
-            "log_file": _normalize_optional_string(execution["log_file"], field_name="execution.log_file"),
-            "tag": _normalize_optional_string(execution["tag"], field_name="execution.tag"),
-            "activation_checkpoint": _normalize_bool(
-                execution["activation_checkpoint"],
-                field_name="execution.activation_checkpoint",
-            ),
-        },
+        "execution": _normalize_fields(execution, "execution", {
+            "log_file": _normalize_optional_string, "tag": _normalize_optional_string,
+            "activation_checkpoint": _normalize_bool,
+        }),
     }
 
     try:

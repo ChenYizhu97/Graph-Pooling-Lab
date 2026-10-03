@@ -32,6 +32,7 @@ def build_cli_request(
     split_train: Optional[float],
     split_val: Optional[float],
 ) -> BenchmarkRequest:
+    """Apply CLI overrides to TOML defaults, then construct validated benchmark values."""
     if "model" not in model_config:
         raise ValueError("Missing [model] section in model config.")
     if "training" not in training_config:

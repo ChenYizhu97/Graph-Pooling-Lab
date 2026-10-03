@@ -17,6 +17,27 @@ rules live in [PROTOCOL.md](PROTOCOL.md).
 
 `["MUTAG", "PROTEINS", "ENZYMES", "FRANKENSTEIN", "Mutagenicity", "AIDS", "DD", "NCI1", "COX2"]`
 
+### POOL COMPARABILITY
+
+Pool signatures are a non-empty set of input/output connectivity pairs. For the
+actual dataset input type, every declared possible output must be supported by
+the post encoder. Multiple input types are allowed; outputs are conditional on
+that input, not the union of outputs from unrelated input domains.
+
+The Python API `check_comparability(pools, ComparisonSetting(dataset, model))`
+returns shared valid `input_types` plus incompatibilities grouped by input type
+and pool. A verdict is true iff at least one shared input is valid. Dataset
+`connectivity_type` is native/default; `connectivity_types` lists available
+representations (binary: `{U}`, scalar: `{U, W}`). Every compared pool must use
+the same representation; individually compatible but disjoint inputs fail.
+An explicit `ComparisonSetting.input_type` prevents fallback to another type.
+`load_dataset(name, connectivity_type=...)` projects scalar to binary by keeping
+edges and dropping weights after existing transforms. Training entry points
+still use the native default; comparability does not select runtime inputs.
+`validate_pool_compatibility` checks one pool before execution. Neither API
+substitutes for controlling concrete splits and training rules across runs.
+Built-in scalar-input domains are not broadened merely by supporting sets.
+
 ### BUILTIN_POOLS
 
 `["nopool", "topkpool", "sagpool", "asapool", "sparsepool", "mincutpool", "diffpool", "densepool"]`

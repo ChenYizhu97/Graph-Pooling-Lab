@@ -1,16 +1,16 @@
 import sys
+from typing import Annotated, Optional
 
 import typer
-from typing_extensions import Annotated, Optional
 
-from gplab.experiment.train_result import execute_train_request
-from gplab.jobs import load_job_file, load_job_text, request_from_job
 from gplab.cli.output import (
     build_error_payload,
     emit_json,
     redirect_stdout_for_json,
     validate_output_format,
 )
+from gplab.experiment.train_result import execute_train_request
+from gplab.jobs import load_job_file, load_job_text, request_from_job
 
 app = typer.Typer(pretty_exceptions_enable=False)
 
@@ -52,54 +52,26 @@ def main(
 ):
     output_format = validate_output_format(output_format)
     json_output = output_format == "json"
+    context = {"source": "job_json"}
+    if job_file is not None:
+        context["job_file"] = job_file
+    error_kind = "job_error"
     try:
         with redirect_stdout_for_json(json_output):
             job = _load_job_input(job_file=job_file, job_json=job_json, job_stdin=job_stdin)
             request = request_from_job(job)
-    except typer.Exit:
-        raise
-    except Exception as exc:
-        if json_output:
-            details = {"source": "job_json"}
-            if job_file is not None:
-                details["job_file"] = job_file
-            emit_json(build_error_payload("job_error", exc, details=details))
-            raise typer.Exit(code=1)
-        raise
-
-    try:
-        context = {
-            "source": "job_json",
-            "case_id": request.case_id,
-        }
-        if job_file is not None:
-            context["job_file"] = job_file
-        with redirect_stdout_for_json(json_output):
-            payload = execute_train_request(
-                request,
-                emit_text=output_format == "text",
-                context=context,
-            )
-
+            context["case_id"] = request.case_id
+            # Preserve the response contract: parsing/validation failures are
+            # job_error; failures after a request is accepted are train_error.
+            error_kind = "train_error"
+            payload = execute_train_request(request, emit_text=not json_output, context=context)
         if json_output:
             emit_json(payload)
     except typer.Exit:
         raise
     except Exception as exc:
         if json_output:
-            details = {
-                "source": "job_json",
-                "case_id": request.case_id,
-            }
-            if job_file is not None:
-                details["job_file"] = job_file
-            emit_json(
-                build_error_payload(
-                    "train_error",
-                    exc,
-                    details=details,
-                )
-            )
+            emit_json(build_error_payload(error_kind, exc, details=context))
             raise typer.Exit(code=1)
         raise
 

@@ -1,7 +1,7 @@
+"""Execute seeded runs, select validation checkpoints, and build experiment records."""
 import copy
-from contextlib import contextmanager
-from dataclasses import dataclass
 import time
+from dataclasses import dataclass
 
 import numpy as np
 import torch
@@ -10,16 +10,20 @@ from rich import print as rprint
 from torch_geometric.nn import summary
 from tqdm import tqdm
 
-from gplab.data.dataset import load_dataset, split_dataset
 from gplab.benchmark.case import TrainingConfig
+from gplab.benchmark.compatibility import (
+    resolve_dataset_connectivity_type,
+    validate_pool_compatibility,
+)
 from gplab.benchmark.plan import RunPlan, SplitIndices
 from gplab.benchmark.request import BenchmarkRequest
-from gplab.benchmark.comparability import resolve_dataset_connectivity_type, validate_comparability
+from gplab.data.dataset import load_dataset, split_dataset
+from gplab.experiment.measurements import capture_structural_statistics, count_trainable_parameters
 from gplab.experiment.record import build_record
 from gplab.experiment.reproducibility import (
+    build_loader,
     configure_runtime_threads,
-    generate_loader,
-    set_np_and_torch,
+    seed_everything,
 )
 from gplab.model import GraphClassifier
 from gplab.runtime import build_runtime_meta, console_separator, print_experiment_info
@@ -28,147 +32,13 @@ from gplab.train_loop import evaluate_epoch, train_epoch
 
 @dataclass
 class PreparedRun:
+    """Loaded dataset, validated run plan, and execution metadata for one request."""
     request: BenchmarkRequest
     dataset: object
     dataset_stats: dict
     run_plan: RunPlan
     runtime: dict
     device: torch.device
-
-
-@dataclass
-class _StructuralStatistics:
-    total_input_nodes: int = 0
-    total_output_nodes: int = 0
-    total_input_edges: int = 0
-    total_output_edges: int = 0
-    total_input_nonzero_edges: int = 0
-    total_output_nonzero_edges: int = 0
-    num_graphs: int = 0
-    _node_retention_sum: float = 0.0
-
-    def observe(
-        self,
-        *,
-        input_x: torch.Tensor,
-        input_edge_index: torch.Tensor,
-        input_batch: torch.Tensor,
-        output_x: torch.Tensor,
-        output_edge_index: torch.Tensor,
-        output_batch: torch.Tensor,
-        input_edge_weight: torch.Tensor | None = None,
-        output_edge_weight: torch.Tensor | None = None,
-    ) -> None:
-        if input_x.size(0) == 0:
-            raise ValueError("Cannot measure pooling structure for an empty graph batch.")
-
-        graph_count = int(input_batch.max().item()) + 1
-        input_nodes_per_graph = torch.bincount(input_batch, minlength=graph_count)
-        output_nodes_per_graph = torch.bincount(output_batch, minlength=graph_count)
-        if output_nodes_per_graph.numel() != graph_count:
-            raise ValueError("Pooled batch contains a graph index absent from the input batch.")
-        if torch.any(input_nodes_per_graph == 0):
-            raise ValueError("Input batch graph indices must be contiguous.")
-
-        self.total_input_nodes += int(input_x.size(0))
-        self.total_output_nodes += int(output_x.size(0))
-        self.total_input_edges += int(input_edge_index.size(1))
-        self.total_output_edges += int(output_edge_index.size(1))
-        self.total_input_nonzero_edges += _count_nonzero_edges(input_edge_index, input_edge_weight)
-        self.total_output_nonzero_edges += _count_nonzero_edges(output_edge_index, output_edge_weight)
-        self.num_graphs += graph_count
-        self._node_retention_sum += float(
-            (
-                output_nodes_per_graph.to(torch.float64)
-                / input_nodes_per_graph.to(torch.float64)
-            ).sum().item()
-        )
-
-    def to_mapping(self) -> dict:
-        if self.num_graphs == 0:
-            raise ValueError("Structural statistics observed no graphs.")
-        return {
-            "total_input_nodes": self.total_input_nodes,
-            "total_output_nodes": self.total_output_nodes,
-            "total_input_edges": self.total_input_edges,
-            "total_output_edges": self.total_output_edges,
-            "total_input_nonzero_edges": self.total_input_nonzero_edges,
-            "total_output_nonzero_edges": self.total_output_nonzero_edges,
-            "num_graphs": self.num_graphs,
-            "mean_node_retention": self._node_retention_sum / self.num_graphs,
-        }
-
-
-def _count_nonzero_edges(edge_index: torch.Tensor, edge_weight: torch.Tensor | None) -> int:
-    if edge_weight is None:
-        return int(edge_index.size(1))
-    return int(torch.count_nonzero(edge_weight).item())
-
-
-def _argument(args: tuple, kwargs: dict, name: str, position: int, default=None):
-    if name in kwargs:
-        return kwargs[name]
-    return args[position] if position < len(args) else default
-
-
-@contextmanager
-def _capture_structural_statistics(model):
-    statistics = _StructuralStatistics()
-    pool_module = getattr(model, "pool_module", None)
-
-    if pool_module is None:
-        def observe_identity(_module, args, kwargs):
-            data = _argument(args, kwargs, "data", 0)
-            batch = getattr(data, "batch", None)
-            if batch is None:
-                batch = data.edge_index.new_zeros(data.x.size(0))
-            statistics.observe(
-                input_x=data.x,
-                input_edge_index=data.edge_index,
-                input_batch=batch,
-                output_x=data.x,
-                output_edge_index=data.edge_index,
-                output_batch=batch,
-                input_edge_weight=getattr(data, "edge_weight", None),
-                output_edge_weight=getattr(data, "edge_weight", None),
-            )
-
-        handle = model.register_forward_pre_hook(observe_identity, with_kwargs=True)
-    else:
-        def observe_pool(_module, args, kwargs, output):
-            statistics.observe(
-                input_x=_argument(args, kwargs, "x", 0),
-                input_edge_index=_argument(args, kwargs, "edge_index", 1),
-                input_batch=_argument(args, kwargs, "batch", 2),
-                output_x=output.x,
-                output_edge_index=output.edge_index,
-                output_batch=output.batch,
-                input_edge_weight=_argument(args, kwargs, "edge_weight", 3),
-                output_edge_weight=output.edge_weight,
-            )
-
-        handle = pool_module.register_forward_hook(observe_pool, with_kwargs=True)
-
-    try:
-        yield statistics
-    finally:
-        handle.remove()
-
-
-def _count_trainable_parameters(model) -> dict:
-    pool_module = getattr(model, "pool_module", None)
-    return {
-        "total": sum(
-            parameter.numel()
-            for parameter in model.parameters()
-            if parameter.requires_grad
-        ),
-        "pooling_module": 0 if pool_module is None else sum(
-            parameter.numel()
-            for parameter in pool_module.parameters()
-            if parameter.requires_grad
-        ),
-    }
 
 
 def _summarize_dataset(dataset) -> dict:
@@ -184,10 +54,11 @@ def _summarize_dataset(dataset) -> dict:
 
 
 def prepare_run(request: BenchmarkRequest, device: torch.device, runtime: dict) -> PreparedRun:
+    """Load the dataset and validate connectivity and split bounds before building a model."""
     dataset = load_dataset(request.case.dataset)
     dataset_stats = _summarize_dataset(dataset)
     dataset_type = resolve_dataset_connectivity_type(dataset)
-    validate_comparability(
+    validate_pool_compatibility(
         dataset_type=dataset_type,
         pool_name=request.case.pool.name,
         pre_conv=request.case.model.pre_conv,
@@ -208,10 +79,7 @@ def prepare_run(request: BenchmarkRequest, device: torch.device, runtime: dict) 
     )
 
 
-def _build_model(
-    prepared: PreparedRun,
-    device: torch.device,
-):
+def _build_model(prepared: PreparedRun) -> GraphClassifier:
     case = prepared.request.case
     execution = prepared.request.execution
     return GraphClassifier(
@@ -223,7 +91,7 @@ def _build_model(
         config=case.model,
         avg_node_num=prepared.dataset_stats["avg_node_num"],
         activation_checkpoint=execution.activation_checkpoint,
-    ).to(device)
+    ).to(prepared.device)
 
 
 def _execute_single_run(
@@ -237,13 +105,16 @@ def _execute_single_run(
     *,
     show_progress: bool,
 ) -> dict:
-    set_np_and_torch(run_seed)
+    """Train from a seeded reset, restore minimum validation loss, then test exactly once."""
+    seed_everything(run_seed)
     train_dataset, val_dataset, test_dataset = split_dataset(dataset, run_split.to_mapping())
 
-    train_loader = generate_loader(train_dataset, train.batch_size, shuffle=True, seed=run_seed)
-    val_loader = generate_loader(val_dataset, train.batch_size, shuffle=False, seed=run_seed)
-    test_loader = generate_loader(test_dataset, train.batch_size, shuffle=False, seed=run_seed)
+    train_loader = build_loader(train_dataset, train.batch_size, shuffle=True, seed=run_seed)
+    val_loader = build_loader(val_dataset, train.batch_size, shuffle=False, seed=run_seed)
+    test_loader = build_loader(test_dataset, train.batch_size, shuffle=False, seed=run_seed)
 
+    # The model is reused across runs. Reset it after seeding and create a new
+    # optimizer so neither learned weights nor Adam state carry into the next run.
     model.reset_parameters()
     optimizer = torch.optim.Adam(model.parameters(), lr=train.lr)
     loss_fn = F.nll_loss
@@ -266,9 +137,13 @@ def _execute_single_run(
         train_epoch(model, train_loader, optimizer, loss_fn, device)
         validation = evaluate_epoch(model, val_loader, loss_fn, device)
 
+        # Pool auxiliary losses affect training, but checkpoint selection uses
+        # classification loss alone so methods share the same selection criterion.
         if validation.classification_loss < best_val_loss:
             best_val_loss = validation.classification_loss
             best_val_auxiliary_loss = validation.auxiliary_loss
+            # state_dict tensors share model storage; copy them so later updates
+            # cannot change the checkpoint selected here.
             best_checkpoint = copy.deepcopy(model.state_dict())
             best_epoch = epoch
             stale_epochs = 0
@@ -280,9 +155,14 @@ def _execute_single_run(
             best_epoch=best_epoch,
             best_val_loss=best_val_loss,
         )
+        # Keep the existing strict boundary: stop on patience + 1 consecutive
+        # non-improving epochs; patience=0 stops at the first non-improvement.
         if stale_epochs > train.patience:
             break
 
+    # Finish training measurements before restoring/testing the checkpoint.
+    # Synchronization includes queued CUDA work; final-test hooks and evaluation
+    # must not inflate the training-only memory peak or wall time.
     peak_training_cuda_allocated_bytes = None
     if device.type == "cuda":
         torch.cuda.synchronize(device)
@@ -292,17 +172,11 @@ def _execute_single_run(
     if best_checkpoint is None:
         raise RuntimeError("Training did not produce a validation checkpoint.")
     model.load_state_dict(best_checkpoint)
-    with _capture_structural_statistics(model) as structural_statistics:
+    with capture_structural_statistics(model) as structural_statistics:
         test = evaluate_epoch(model, test_loader, loss_fn, device)
 
     return {
-        "run": run_idx,
         "seed": run_seed,
-        "split_sizes": {
-            "train": len(train_dataset),
-            "val": len(val_dataset),
-            "test": len(test_dataset),
-        },
         "best_epoch": best_epoch,
         "best_val_loss": best_val_loss,
         "best_val_auxiliary_loss": best_val_auxiliary_loss,
@@ -315,8 +189,9 @@ def _execute_single_run(
 
 
 def run_experiment(request: BenchmarkRequest, *, emit_text: bool = True) -> dict:
+    """Execute all planned seeds with one reusable model and return a canonical record."""
     configure_runtime_threads()
-    set_np_and_torch(0)
+    seed_everything(0)
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     runtime = build_runtime_meta(device)
 
@@ -324,7 +199,7 @@ def run_experiment(request: BenchmarkRequest, *, emit_text: bool = True) -> dict
         print_experiment_info(request.case, request.execution, device)
 
     prepared = prepare_run(request, device, runtime)
-    model = _build_model(prepared, device)
+    model = _build_model(prepared)
     if emit_text:
         rprint(summary(model, data=prepared.dataset[0].to(device), leaf_module=None, max_depth=5))
 
@@ -349,7 +224,7 @@ def run_experiment(request: BenchmarkRequest, *, emit_text: bool = True) -> dict
             rprint(console_separator("-"))
 
     # Normal training has now materialized any lazy parameters in custom pools.
-    trainable_parameters = _count_trainable_parameters(model)
+    trainable_parameters = count_trainable_parameters(model)
     record = build_record(
         request.case,
         execution=request.execution,

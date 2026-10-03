@@ -1,19 +1,18 @@
-from typing import Optional
+from typing import Annotated, Optional
 
 import torch
 import typer
-from typing_extensions import Annotated
 
 from gplab.benchmark.request import BenchmarkRequest
-from gplab.experiment.record import summarize_record
-from gplab.experiment.record_log import RecordLogError, find_record_by_id, load_record_log
-from gplab.experiment.train_result import execute_train_request
 from gplab.cli.output import (
     build_error_payload,
     emit_json,
     redirect_stdout_for_json,
     validate_output_format,
 )
+from gplab.experiment.record import summarize_record
+from gplab.experiment.record_log import RecordLogError, find_record_by_id, load_record_log
+from gplab.experiment.train_result import execute_train_request
 from gplab.runtime import build_runtime_meta
 
 app = typer.Typer(pretty_exceptions_enable=False)
@@ -27,26 +26,13 @@ def _compatibility_status(recorded: dict, current: dict) -> tuple[str, list[dict
         ("device", "device"),
         ("cuda_available", "cuda_available"),
     ]
-    details = []
-    mismatch_found = False
-    for key, label in checks:
-        recorded_value = recorded[key]
-        current_value = current[key]
-        match = recorded_value == current_value
-        if recorded_value != current_value:
-            mismatch_found = True
-        details.append(
-            {
-                "field": label,
-                "recorded": recorded_value,
-                "current": current_value,
-                "match": match,
-            }
-        )
-
-    if mismatch_found:
-        return "mismatch", details
-    return "compatible", details
+    details = [
+        {"field": label, "recorded": recorded[key], "current": current[key],
+         "match": recorded[key] == current[key]}
+        for key, label in checks
+    ]
+    status = "compatible" if all(item["match"] for item in details) else "mismatch"
+    return status, details
 
 
 @app.command()
@@ -66,6 +52,8 @@ def main(
         record = find_record_by_id(load_record_log(log_file), record_id)
         replay_request = BenchmarkRequest.from_record_for_replay(record, replay_log_file=replay_log_file)
         replay_job = replay_request.to_mapping()
+        # Keep source and replay IDs distinct: replacing auto seeds with an
+        # explicit list changes case identity even when the actual runs match.
         source_case_id = record["run_plan"]["case_id"]
         replay_case_id = replay_request.case_id
 
@@ -91,60 +79,48 @@ def main(
             },
         }
 
-        if json_output:
-            if run:
-                with redirect_stdout_for_json(True):
-                    run_payload = execute_train_request(
-                        replay_request,
-                        emit_text=False,
-                        context={
-                            "source": "record_replay",
-                            "source_record_id": record["record_id"],
-                            "source_case_id": source_case_id,
-                            "case_id": replay_case_id,
-                            "job": replay_job,
-                        },
-                    )
-                replay_payload["rerun"] = {
-                    "requested": True,
-                    "ok": True,
-                    "payload": run_payload,
-                    "record_id": run_payload["summary"]["record_id"],
-                    "summary": run_payload["summary"],
-                    "appended_to_log": replay_log_file is not None,
-                }
-            emit_json(replay_payload)
-            return
-
-        print(f"Replay record: {record['record_id']}")
-        print("Replay mode: in-process record replay")
-        print(f"Source case_id: {source_case_id}")
-        print(f"Replay job case_id: {replay_case_id}")
-        if replay_log_file is not None:
-            print(f"Replay log file: {replay_log_file}")
-        if status == "compatible":
-            print("Runtime compatibility: current environment matches recorded runtime on checked fields.")
-        else:
-            print(f"Runtime compatibility: {status}")
-            for item in details:
-                if not item["match"]:
-                    print(f"  - {item['field']}: recorded={item['recorded']!r}, current={item['current']!r}")
+        if not json_output:
+            print(f"Replay record: {record['record_id']}")
+            print("Replay mode: in-process record replay")
+            print(f"Source case_id: {source_case_id}")
+            print(f"Replay job case_id: {replay_case_id}")
+            if replay_log_file is not None:
+                print(f"Replay log file: {replay_log_file}")
+            if status == "compatible":
+                print("Runtime compatibility: current environment matches recorded runtime on checked fields.")
+            else:
+                print(f"Runtime compatibility: {status}")
+                for item in details:
+                    if not item["match"]:
+                        print(f"  - {item['field']}: recorded={item['recorded']!r}, current={item['current']!r}")
 
         if run:
-            run_payload = execute_train_request(
-                replay_request,
-                emit_text=True,
-                context={
-                    "source": "record_replay",
-                    "source_record_id": record["record_id"],
-                    "source_case_id": source_case_id,
-                    "case_id": replay_case_id,
-                    "job": replay_job,
-                },
-            )
-            print(f"Rerun record_id: {run_payload['summary']['record_id']}")
-        else:
+            with redirect_stdout_for_json(json_output):
+                run_payload = execute_train_request(
+                    replay_request,
+                    emit_text=not json_output,
+                    context={
+                        "source": "record_replay",
+                        "source_record_id": record["record_id"],
+                        "source_case_id": source_case_id,
+                        "case_id": replay_case_id,
+                        "job": replay_job,
+                    },
+                )
+            replay_payload["rerun"] = {
+                "requested": True,
+                "ok": True,
+                "payload": run_payload,
+                "record_id": run_payload["summary"]["record_id"],
+                "summary": run_payload["summary"],
+                "appended_to_log": replay_log_file is not None,
+            }
+            if not json_output:
+                print(f"Rerun record_id: {run_payload['summary']['record_id']}")
+        elif not json_output:
             print("Use --run to execute this replay.")
+        if json_output:
+            emit_json(replay_payload)
     except typer.Exit:
         raise
     except RecordLogError as exc:

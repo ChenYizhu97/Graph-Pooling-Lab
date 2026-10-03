@@ -1,17 +1,15 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import shlex
+from dataclasses import dataclass
 from typing import Optional
 
-from gplab.benchmark.identity import compute_record_benchmark_key
 from gplab.data.profiles import get_dataset_profile
 from gplab.experiment.record import summarize_record
 from gplab.layers.pool.profiles import validate_pooling_profile_name
 from gplab.utils.validation import (
     validate_model_variant_value,
 )
-
 
 SORT_FIELDS = ("mean", "std", "avg_best_epoch", "avg_val_loss")
 LOWER_IS_BETTER = {"std", "avg_val_loss", "avg_best_epoch"}
@@ -26,6 +24,7 @@ class QuerySpecError(ValueError):
 
 @dataclass(frozen=True)
 class QuerySpec:
+    """Record filters and presentation choices, separate from benchmark grouping rules."""
     log_file: str
     dataset: Optional[str] = None
     pool: Optional[str] = None
@@ -112,64 +111,45 @@ def _summary_for_query(record: dict, spec: QuerySpec) -> dict:
 
 
 def build_query_result(records: list[dict], spec: QuerySpec) -> dict:
-    selected = _sort_records(select_records(records, spec), spec.sort_by)
+    """Filter records, compute each summary once, and order by the requested metric."""
+    selected = select_records(records, spec)
     return {
         "ok": True,
         "kind": "query_result",
         "context": _context(spec, total_records=len(records), matched_records=len(selected)),
-        "summaries": [_summary_for_query(record, spec) for record in selected],
+        "summaries": _sort_summaries([_summary_for_query(record, spec) for record in selected], spec.sort_by),
     }
 
 
-def _sort_value(record: dict, sort_by: str) -> float:
-    return float(summarize_record(record)[sort_by])
-
-
-def _sort_records(records: list[dict], sort_by: str) -> list[dict]:
-    return sorted(
-        records,
-        key=lambda record: _sort_value(record, sort_by),
-        reverse=sort_by not in LOWER_IS_BETTER,
-    )
-
-
-def _rank_groups(records: list[dict], sort_by: str) -> list[tuple[str, list[dict]]]:
-    groups: dict[str, list[dict]] = {}
-    for record in records:
-        groups.setdefault(compute_record_benchmark_key(record), []).append(record)
-    return [
-        (benchmark_key, _sort_records(group, sort_by))
-        for benchmark_key, group in groups.items()
-    ]
+def _sort_summaries(summaries: list[dict], sort_by: str) -> list[dict]:
+    return sorted(summaries, key=lambda summary: float(summary[sort_by]),
+                  reverse=sort_by not in LOWER_IS_BETTER)
 
 
 def build_benchmark_report(records: list[dict], spec: QuerySpec) -> dict:
+    """Rank summaries within protocol-compatible groups using benchmark-derived keys."""
     selected = select_records(records, spec)
+    by_benchmark: dict[str, list[dict]] = {}
+    for record in selected:
+        summary = _summary_for_query(record, spec)
+        by_benchmark.setdefault(summary["benchmark_key"], []).append(summary)
     groups = []
-    for benchmark_key, ranked in _rank_groups(selected, spec.sort_by):
+    for benchmark_key, summaries in by_benchmark.items():
+        ranked = _sort_summaries(summaries, spec.sort_by)
         first = ranked[0]
-        tags = sorted(
-            {
-                record["execution"].get("tag")
-                for record in ranked
-                if record["execution"].get("tag") is not None
-            }
-        )
-        summaries = []
-        for index, record in enumerate(ranked, start=1):
-            summary = _summary_for_query(record, spec)
+        tags = sorted({summary["tag"] for summary in ranked if summary.get("tag") is not None})
+        for index, summary in enumerate(ranked, start=1):
             summary["rank"] = index
-            summaries.append(summary)
 
         group = {
             "benchmark_key": benchmark_key,
             "comparison": {
-                "dataset": first["case"]["dataset"],
-                "model_variant": first["case"]["model"]["variant"],
-                "pool_ratio": first["case"]["pool"]["ratio"],
-                "pool_nonlinearity": first["case"]["pool"]["nonlinearity"],
+                "dataset": first["dataset"],
+                "model_variant": first["model_variant"],
+                "pool_ratio": first["pool_ratio"],
+                "pool_nonlinearity": first["pool_nonlinearity"],
             },
-            "summaries": summaries,
+            "summaries": ranked,
         }
         if tags:
             group["tags"] = tags

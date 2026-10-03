@@ -1,80 +1,31 @@
-"""
-This pooling layer is adapted from the pytorch version, because the current pytorch version is slightly inconsistent with the paper, which introduces an extra parameter.
-"""
+"""Adapted from PyG SAGPooling, without its extra learned selection projection."""
 from typing import Callable, Optional, Union
+
 import torch
 from torch import Tensor
 from torch_geometric.nn import GraphConv
 from torch_geometric.nn.pool.connect import FilterEdges
 from torch_geometric.nn.pool.select import Select, SelectOutput
-from ..functional import topk
 from torch_geometric.nn.resolver import activation_resolver
 from torch_geometric.typing import OptTensor
 from torch_geometric.utils import softmax
 
+from ..functional import topk
 from .pooling_output import PoolingOutput
 
 
 class SAGPooling(torch.nn.Module):
-    r"""The self-attention pooling operator from the `"Self-Attention Graph
-    Pooling" <https://arxiv.org/abs/1904.08082>`_ and `"Understanding
-    Attention and Generalization in Graph Neural Networks"
-    <https://arxiv.org/abs/1905.02850>`_ papers.
+    """Select and gate nodes using a scalar GNN score, then keep induced edges.
 
-    If :obj:`min_score` :math:`\tilde{\alpha}` is :obj:`None`, computes:
+    Based on the SAG papers: arxiv.org/abs/1904.08082 and arxiv.org/abs/1905.02850.
 
-        .. math::
-            \mathbf{y} &= \textrm{GNN}(\mathbf{X}, \mathbf{A})
-
-            \mathbf{i} &= \mathrm{top}_k(\mathbf{y})
-
-            \mathbf{X}^{\prime} &= (\mathbf{X} \odot
-            \mathrm{tanh}(\mathbf{y}))_{\mathbf{i}}
-
-            \mathbf{A}^{\prime} &= \mathbf{A}_{\mathbf{i},\mathbf{i}}
-
-    If :obj:`min_score` :math:`\tilde{\alpha}` is a value in :obj:`[0, 1]`,
-    computes:
-
-        .. math::
-            \mathbf{y} &= \mathrm{softmax}(\textrm{GNN}(\mathbf{X},\mathbf{A}))
-
-            \mathbf{i} &= \mathbf{y}_i > \tilde{\alpha}
-
-            \mathbf{X}^{\prime} &= (\mathbf{X} \odot \mathbf{y})_{\mathbf{i}}
-
-            \mathbf{A}^{\prime} &= \mathbf{A}_{\mathbf{i},\mathbf{i}}.
-
-    Projections scores are learned based on a graph neural network layer.
-
-    Args:
-        in_channels (int): Size of each input sample.
-        ratio (float or int): Graph pooling ratio, which is used to compute
-            :math:`k = \lceil \mathrm{ratio} \cdot N \rceil`, or the value
-            of :math:`k` itself, depending on whether the type of :obj:`ratio`
-            is :obj:`float` or :obj:`int`.
-            This value is ignored if :obj:`min_score` is not :obj:`None`.
-            (default: :obj:`0.5`)
-        GNN (torch.nn.Module, optional): A graph neural network layer for
-            calculating projection scores (one of
-            :class:`torch_geometric.nn.conv.GraphConv`,
-            :class:`torch_geometric.nn.conv.GCNConv`,
-            :class:`torch_geometric.nn.conv.GATConv` or
-            :class:`torch_geometric.nn.conv.SAGEConv`). (default:
-            :class:`torch_geometric.nn.conv.GraphConv`)
-        min_score (float, optional): Minimal node score :math:`\tilde{\alpha}`
-            which is used to compute indices of pooled nodes
-            :math:`\mathbf{i} = \mathbf{y}_i > \tilde{\alpha}`.
-            When this value is not :obj:`None`, the :obj:`ratio` argument is
-            ignored. (default: :obj:`None`)
-        multiplier (float, optional): Coefficient by which features gets
-            multiplied after pooling. This can be useful for large graphs and
-            when :obj:`min_score` is used. (default: :obj:`1`)
-        nonlinearity (str or callable, optional): The non-linearity to use.
-            (default: :obj:`"tanh"`)
-        **kwargs (optional): Additional parameters for initializing the graph
-            neural network layer.
+    Without ``min_score``, select ceil(ratio * N) nodes per graph (ratio >= 1
+    means a fixed count) after applying ``nonlinearity``. With ``min_score``,
+    use graph-wise softmax scores and a threshold, keeping at least one node.
+    ``multiplier`` scales selected features. Edge weights pass through to the
+    induced graph; they do not participate in attention scoring.
     """
+
     def __init__(
         self,
         in_channels: int,
@@ -110,22 +61,7 @@ class SAGPooling(torch.nn.Module):
         edge_weight: OptTensor = None,
         attn: OptTensor = None,
     ) -> PoolingOutput:
-        r"""
-        Args:
-            x (torch.Tensor): The node feature matrix.
-            edge_index (torch.Tensor): The edge indices.
-            batch (torch.Tensor, optional): The batch vector
-                :math:`\mathbf{b} \in {\{ 0, \ldots, B-1\}}^N`, which assigns
-                each node to a specific example. (default: :obj:`None`)
-            edge_weight (torch.Tensor, optional): Scalar edge connectivity.
-                (default: :obj:`None`)
-            attn (torch.Tensor, optional): Optional node-level matrix to use
-                for computing attention scores instead of using the node
-                feature matrix :obj:`x`. (default: :obj:`None`)
-
-        Returns:
-            PoolingOutput with pooled graph structure
-        """
+        """Pool a graph batch; optional ``attn`` replaces features for scoring only."""
         if batch is None:
             batch = edge_index.new_zeros(x.size(0))
 
@@ -169,6 +105,8 @@ class SAGPooling(torch.nn.Module):
 
 
 class SelectSAG(Select):
+    """Turn scalar GNN scores into selected node indices and feature gates."""
+
     def __init__(
             self,
             ratio,
@@ -193,7 +131,7 @@ class SelectSAG(Select):
         attn: Tensor,
         batch: Optional[Tensor] = None,
     ) -> SelectOutput:
-        """"""
+        """Normalize scores within each graph and select nodes without learnable weights."""
         if batch is None:
             batch = attn.new_zeros(attn.size(0), dtype=torch.long)
 

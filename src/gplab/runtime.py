@@ -1,17 +1,14 @@
 import os
-import sys
 import platform
+import sys
 from datetime import datetime, timezone
+
 import torch
+import torch_geometric
 from rich import print as rprint
 
 from gplab.benchmark.case import BenchmarkCase
 from gplab.benchmark.execution import ExecutionOptions
-
-try:
-    import torch_geometric
-except Exception:  # pragma: no cover - defensive
-    torch_geometric = None
 
 
 def print_experiment_info(
@@ -41,7 +38,7 @@ def print_experiment_info(
 
 
 def build_runtime_meta(device: torch.device) -> dict:
-    meta = {
+    return {
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "python_version": sys.version.split()[0],
         "torch_version": torch.__version__,
@@ -51,7 +48,6 @@ def build_runtime_meta(device: torch.device) -> dict:
         "cudnn_deterministic": bool(torch.backends.cudnn.deterministic),
         "cudnn_benchmark": bool(torch.backends.cudnn.benchmark),
     }
-    return meta
 
 
 def console_separator(

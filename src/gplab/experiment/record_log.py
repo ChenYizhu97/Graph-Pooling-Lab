@@ -4,7 +4,6 @@ from gplab.experiment.identity import require_record_id
 from gplab.experiment.record import ExperimentRecord
 from gplab.utils.jsonl import read_jsonl
 
-
 RECORD_FIELDS = ("case", "execution", "run_plan", "runtime", "result")
 
 
@@ -32,6 +31,7 @@ def require_experiment_record(record: dict) -> ExperimentRecord:
 
 
 def load_record_log(log_file: str) -> list[ExperimentRecord]:
+    """Read canonical JSONL records and reject missing envelope fields."""
     return [require_experiment_record(record) for record in read_jsonl(log_file)]
 
 

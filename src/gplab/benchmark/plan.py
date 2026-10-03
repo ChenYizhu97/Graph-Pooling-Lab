@@ -11,6 +11,7 @@ from .seeds import resolve_seeds
 
 @dataclass(frozen=True)
 class SplitIndices:
+    """Concrete dataset indices for one run; persisted so replay avoids resplitting."""
     train: tuple[int, ...]
     val: tuple[int, ...]
     test: tuple[int, ...]
@@ -33,6 +34,7 @@ class SplitIndices:
 
 @dataclass(frozen=True)
 class RunPlan:
+    """Resolved seeds and concrete splits paired in execution order."""
     case_id: str
     seeds: tuple[int, ...]
     splits: tuple[SplitIndices, ...]
@@ -47,6 +49,7 @@ class RunPlan:
 
     @classmethod
     def build(cls, case: BenchmarkCase, dataset_size: int) -> RunPlan:
+        """Resolve the seed policy and deterministically partition the dataset per seed."""
         training = case.training
         seed_policy = training.seeds
         seeds = resolve_seeds(
@@ -74,6 +77,7 @@ class RunPlan:
         )
 
     def validate_for_execution(self, *, runs: int, dataset_size: int) -> None:
+        """Check run count and index bounds before indexing the loaded dataset."""
         if len(self.splits) != runs:
             raise ValueError("Run plan length must equal case.training.runs.")
         for split in self.splits:

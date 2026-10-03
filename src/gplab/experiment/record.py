@@ -3,16 +3,16 @@ from typing import Any
 import numpy as np
 
 from gplab.benchmark.case import BenchmarkCase
-from gplab.benchmark.identity import compute_record_benchmark_key
 from gplab.benchmark.execution import ExecutionOptions
+from gplab.benchmark.identity import compute_record_benchmark_key
 from gplab.benchmark.plan import RunPlan
 from gplab.experiment.identity import attach_record_id, require_record_id
-
 
 ExperimentRecord = dict[str, Any]
 
 
 def build_result(run_records: list[dict], *, trainable_parameters: dict) -> dict:
+    """Normalize persisted run measurements and aggregate final-test accuracy (population std)."""
     if not run_records:
         raise ValueError("Cannot build result from an empty run record list.")
 
@@ -66,6 +66,7 @@ def build_record(
     run_records: list[dict],
     trainable_parameters: dict,
 ) -> ExperimentRecord:
+    """Attach a content-derived ID to the case, run plan, runtime, and compact results."""
     record = {
         "case": case.to_mapping(),
         "execution": execution.to_mapping(),
@@ -80,6 +81,7 @@ def build_record(
 
 
 def summarize_record(record: ExperimentRecord) -> dict:
+    """Derive query metrics without rewriting historical fields or record IDs."""
     ensured = require_record_id(record)
     runs = ensured["result"]["runs"]
     # Read historical logs without rewriting their persisted fields or IDs.
@@ -94,6 +96,8 @@ def summarize_record(record: ExperimentRecord) -> dict:
     ]
     epochs = [int(run["best_epoch"]) for run in runs]
 
+    # Correlation is undefined with fewer than two runs or zero variance;
+    # expose null rather than a misleading zero or a non-portable JSON NaN.
     corr = None
     if len(runs) >= 2 and np.std(val_loss) != 0 and np.std(test_acc) != 0:
         corr = float(np.corrcoef(val_loss, test_acc)[0, 1])

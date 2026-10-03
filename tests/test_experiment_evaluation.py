@@ -1,6 +1,6 @@
 import copy
-from dataclasses import replace
 import unittest
+from dataclasses import replace
 from unittest.mock import patch
 
 import torch
@@ -11,17 +11,16 @@ from gplab.benchmark.execution import ExecutionOptions
 from gplab.benchmark.plan import RunPlan, SplitIndices
 from gplab.benchmark.request import BenchmarkRequest
 from gplab.experiment.execute import (
-    _capture_structural_statistics,
-    _count_trainable_parameters,
     _execute_single_run,
     run_experiment,
 )
 from gplab.experiment.identity import attach_record_id
+from gplab.experiment.measurements import capture_structural_statistics, count_trainable_parameters
 from gplab.experiment.query import QuerySpec, build_benchmark_report, build_query_result
 from gplab.experiment.record import build_record, build_result
 from gplab.graph import ConnectivityType
-from gplab.layers.pool.profiles import POOLING_PROFILES, PoolingProfile, PoolingSignature
 from gplab.layers.pool.pooling_output import PoolingOutput
+from gplab.layers.pool.profiles import POOLING_PROFILES, PoolingProfile, PoolingSignature
 from gplab.model import GraphClassifier
 from gplab.train_loop import EvaluationResult
 
@@ -201,7 +200,7 @@ class ExperimentEvaluationTests(unittest.TestCase):
                 return_value=([0], [1], [2, 3]),
             ),
             patch(
-                "gplab.experiment.execute.generate_loader",
+                "gplab.experiment.execute.build_loader",
                 side_effect=["train", "val", "test"],
             ),
             patch("gplab.experiment.execute.train_epoch", side_effect=train_one_epoch),
@@ -238,7 +237,7 @@ class ExperimentEvaluationTests(unittest.TestCase):
             batch=torch.tensor([0, 0, 0, 1, 1]),
         )
 
-        with _capture_structural_statistics(model) as statistics:
+        with capture_structural_statistics(model) as statistics:
             model(batch)
 
         self.assertEqual(
@@ -270,7 +269,7 @@ class ExperimentEvaluationTests(unittest.TestCase):
             (_PooledModel(), 2, 1),
         ):
             with self.subTest(model=type(model).__name__):
-                with _capture_structural_statistics(model) as statistics:
+                with capture_structural_statistics(model) as statistics:
                     model(batch)
                 measured = statistics.to_mapping()
                 self.assertEqual(measured["total_input_edges"], 6)
@@ -296,7 +295,7 @@ class ExperimentEvaluationTests(unittest.TestCase):
                 model = GraphClassifier(
                     2, 2, _case().model, pool_method=pool_name, ratio=0.5, avg_node_num=4,
                 ).eval()
-                with torch.no_grad(), _capture_structural_statistics(model) as statistics:
+                with torch.no_grad(), capture_structural_statistics(model) as statistics:
                     model(graph)
                 measured = statistics.to_mapping()
                 self.assertEqual(measured["total_output_edges"], 4)
@@ -325,7 +324,7 @@ class ExperimentEvaluationTests(unittest.TestCase):
                     avg_node_num=4,
                 )
                 model.eval()
-                with _capture_structural_statistics(model) as statistics:
+                with capture_structural_statistics(model) as statistics:
                     model(batch)
                 measured = statistics.to_mapping()
 
@@ -339,7 +338,7 @@ class ExperimentEvaluationTests(unittest.TestCase):
 
     def test_result_records_counts_without_per_graph_details(self):
         model = _PooledModel()
-        counts = _count_trainable_parameters(model)
+        counts = count_trainable_parameters(model)
         self.assertEqual(counts, {"total": 11, "pooling_module": 3})
 
         run = {
@@ -463,7 +462,7 @@ class ExperimentEvaluationTests(unittest.TestCase):
             nonlocal memory_peak
             events.append("statistics")
             memory_peak = max(memory_peak, 32768)
-            return _capture_structural_statistics(current_model)
+            return capture_structural_statistics(current_model)
 
         with (
             patch(
@@ -471,13 +470,13 @@ class ExperimentEvaluationTests(unittest.TestCase):
                 return_value=([0], [1], [2]),
             ),
             patch(
-                "gplab.experiment.execute.generate_loader",
+                "gplab.experiment.execute.build_loader",
                 side_effect=["train", "val", "test"],
             ),
             patch("gplab.experiment.execute.train_epoch", side_effect=train_one_epoch),
             patch("gplab.experiment.execute.evaluate_epoch", side_effect=evaluate),
             patch.object(model, "load_state_dict", side_effect=restore_checkpoint),
-            patch("gplab.experiment.execute._capture_structural_statistics", side_effect=capture_statistics),
+            patch("gplab.experiment.execute.capture_structural_statistics", side_effect=capture_statistics),
             patch(
                 "gplab.experiment.execute.torch.cuda.synchronize",
                 side_effect=lambda _device: events.append("synchronize"),
