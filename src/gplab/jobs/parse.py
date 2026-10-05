@@ -12,8 +12,6 @@ def _infer_error_field(message: str) -> str | None:
         return "experiment.dataset"
     if "pooling method" in message:
         return "experiment.pool.name"
-    if "pool_ratio" in message:
-        return "experiment.pool.ratio"
     if "model_variant" in message:
         return "experiment.model.variant"
     if "seed_mode" in message:

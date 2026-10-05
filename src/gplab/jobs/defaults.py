@@ -10,7 +10,7 @@ AUTOMATION_MODEL_DEFAULTS = {
 }
 
 AUTOMATION_TRAINING_DEFAULTS = {
-    "runs": 10,
+    "num_runs": 10,
     "lr": 0.0005,
     "batch_size": 32,
     "patience": 50,

@@ -145,9 +145,9 @@ def build_benchmark_report(records: list[dict], spec: QuerySpec) -> dict:
             "comparison_group_key": comparison_group_key,
             "comparison": {
                 "dataset": first["dataset"],
+                "input_type": first["input_type"],
                 "model_variant": first["model_variant"],
-                "pool_ratio": first["pool_ratio"],
-                "pool_nonlinearity": first["pool_nonlinearity"],
+                "compression": first["compression"],
             },
             "summaries": ranked,
         }
@@ -173,9 +173,9 @@ def format_report_text(payload: dict) -> str:
         comparison = group["comparison"]
         header_parts = [
             f"dataset={comparison['dataset']}",
+            f"input_type={comparison['input_type']}",
             f"model={comparison['model_variant']}",
-            f"ratio={comparison['pool_ratio']}",
-            f"pool_nonlinearity={comparison['pool_nonlinearity']}",
+            f"compression={comparison['compression']}",
             f"comparison_group={group['comparison_group_key']}",
         ]
         tags = group.get("tags", [])
@@ -189,7 +189,11 @@ def format_report_text(payload: dict) -> str:
             corr = summary["val_loss_test_acc_corr"]
             corr_text = "n/a" if corr is None else f"{corr:.4f}"
             lines.append(
-                f"{summary['rank']}. pool={summary['pool']} ratio={summary['pool_ratio']} "
+                f"{summary['rank']}. pool={summary['pool']} retention={summary['mean_node_retention']:.4f} "
+                f"edges={summary['mean_output_edges']:.1f} "
+                f"training_s={summary['mean_training_wall_time_seconds']:.3f} "
+                f"peak_cuda_bytes={summary['peak_training_cuda_allocated_bytes']} "
+                f"compression_status={(summary['compression_resolution'] or {}).get('status', 'n/a')} "
                 f"mean={summary['mean']:.4f} std={summary['std']:.4f} "
                 f"avg_epoch={summary['avg_best_epoch']:.1f} avg_val_loss={summary['avg_val_loss']:.6f} "
                 f"val_test_corr={corr_text} record_id={summary['record_id']}"

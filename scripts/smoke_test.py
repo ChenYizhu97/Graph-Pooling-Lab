@@ -23,11 +23,11 @@ def main() -> None:
             job = {
                 "experiment": {
                     "dataset": dataset,
-                    "pool": {"name": pool, "ratio": float(os.environ.get("POOL_RATIO", "0.5"))},
+                    "pool": {"name": pool, "params": {"ratio": float(os.environ.get("POOL_RATIO", "0.5"))}},
                     "model": {"variant": os.environ.get("MODEL_VARIANT", "sum")},
                     "training": {
                         **{field: int(os.environ.get(field.upper(), default)) for field, default in
-                           (("runs", "1"), ("epochs", "1"), ("patience", "0"), ("batch_size", "16"))},
+                           (("num_runs", "1"), ("epochs", "1"), ("patience", "0"), ("batch_size", "16"))},
                         "lr": float(os.environ.get("LR", "0.0005")),
                         "split": {"train": float(os.environ.get("SPLIT_TRAIN", "0.8")),
                                   "val": float(os.environ.get("SPLIT_VAL", "0.1"))},

@@ -21,7 +21,6 @@ from gplab.jobs.job import ExperimentJob
 from gplab.jobs.schema import JobSchemaError, normalize_job_shape
 from gplab.layers.conv.profiles import CONV_PROFILES
 from gplab.layers.functional import readout as graph_readout
-from gplab.layers.pool.dense_pool_adapter import DensePoolAdapter
 from gplab.layers.pool.profiles import (
     POOLING_PROFILES,
     PoolingSignature,
@@ -57,7 +56,7 @@ class _RecordingPool(torch.nn.Module):
 def _config(pool="nopool", pre_conv="GCN", post_conv="GCN", variant="plain"):
     return ExperimentConfig.from_mapping({
         "dataset": "MUTAG",
-        "pool": {"name": pool, "ratio": 0.5, "nonlinearity": "tanh"},
+        "pool": {"name": pool, "params": {"ratio": 0.5}},
         "model": {
             "hidden_features": 4, "nonlinearity": "relu", "p_dropout": 0.0,
             "pre_conv": pre_conv, "post_conv": post_conv,
@@ -65,7 +64,7 @@ def _config(pool="nopool", pre_conv="GCN", post_conv="GCN", variant="plain"):
         },
         "training": {
             "activation_checkpoint": False,
-            "runs": 1, "lr": 0.001, "batch_size": 2, "patience": 0, "epochs": 1,
+            "num_runs": 1, "lr": 0.001, "batch_size": 2, "patience": 0, "epochs": 1,
             "split": {"train": 0.5, "val": 0.25},
             "seeds": {"mode": "list", "base": 1, "values": [1], "allow_duplicates": False},
         },
@@ -139,7 +138,7 @@ class CompatibilityTests(unittest.TestCase):
             in_channels=2,
             ratio=0.5,
             avg_node_num=None,
-            nonlinearity="tanh",
+
         )
         graph = Data(
             x=torch.randn(4, 2),
@@ -156,7 +155,7 @@ class CompatibilityTests(unittest.TestCase):
             2,
             _config(profile_name).model,
             pool_method=profile_name,
-            ratio=0.5,
+            pool_params={"ratio": 0.5},
             avg_node_num=4,
         )
         self.assertEqual(tuple(model(graph)[0].shape), (1, 2))
@@ -183,7 +182,7 @@ class CompatibilityTests(unittest.TestCase):
             in_channels=2,
             ratio=0.5,
             avg_node_num=None,
-            nonlinearity="tanh",
+
         )
         output = pool(
             x=torch.randn(4, 2),
@@ -210,10 +209,10 @@ class CompatibilityTests(unittest.TestCase):
             normalize_job_shape({
                 "experiment": {
                     "dataset": "MUTAG",
-                    "pool": {"name": "nopool", "ratio": 0.5},
+                    "pool": {"name": "nopool", "params": {"ratio": 0.5}},
                     "model": {"conv_layer": "GraphConv"},
                     "training": {
-            "activation_checkpoint": False,"runs": 1, "epochs": 1, "patience": 0},
+            "activation_checkpoint": False,"num_runs": 1, "epochs": 1, "patience": 0},
                 }
             })
 
@@ -240,7 +239,7 @@ class CompatibilityTests(unittest.TestCase):
                 pre_conv="GIN",
                 post_conv="GCN",
             ),
-            ("nopool",),
+            ("nopool", "topkpool", "sparsepool"),
         )
 
         model = GraphClassifier(
@@ -248,7 +247,7 @@ class CompatibilityTests(unittest.TestCase):
             2,
             _config(pre_conv="GIN", post_conv="GCN").model,
             pool_method="nopool",
-            ratio=0.5,
+            pool_params={"ratio": 0.5},
             avg_node_num=3,
         )
         recording_pool = _RecordingPool()
@@ -298,7 +297,7 @@ class CompatibilityTests(unittest.TestCase):
                     2,
                     _config(pre_conv=conv_name, post_conv=conv_name).model,
                     pool_method="nopool",
-                    ratio=0.5,
+                    pool_params={"ratio": 0.5},
                     avg_node_num=3,
                 )
                 recording_pool = _RecordingPool()
@@ -348,7 +347,7 @@ class CompatibilityTests(unittest.TestCase):
 
     def test_scalar_pool_output_reaches_post_convolution(self):
         model = GraphClassifier(
-            2, 2, _config("diffpool").model, pool_method="diffpool", ratio=0.5, avg_node_num=3,
+            2, 2, _config("diffpool").model, pool_method="diffpool", pool_params={"ratio": 0.5}, avg_node_num=3,
         )
         seen = {}
         def observe(_module, _args, kwargs, _output):
@@ -375,7 +374,7 @@ class CompatibilityTests(unittest.TestCase):
             2,
             _config().model,
             pool_method="nopool",
-            ratio=0.5,
+            pool_params={"ratio": 0.5},
             avg_node_num=3,
         )
         current_state = model.state_dict()
@@ -416,7 +415,7 @@ class CompatibilityTests(unittest.TestCase):
                     2,
                     _config(variant=variant).model,
                     pool_method="nopool",
-                    ratio=0.5,
+                    pool_params={"ratio": 0.5},
                     avg_node_num=4,
                 )
                 with patch(
@@ -440,7 +439,7 @@ class CompatibilityTests(unittest.TestCase):
             2,
             _config().model,
             pool_method="nopool",
-            ratio=0.5,
+            pool_params={"ratio": 0.5},
             avg_node_num=4,
         )
         with patch("gplab.model.classifier.checkpoint") as checkpoint_mock:
@@ -452,7 +451,7 @@ class CompatibilityTests(unittest.TestCase):
             2,
             _config().model,
             pool_method="nopool",
-            ratio=0.5,
+            pool_params={"ratio": 0.5},
             avg_node_num=4,
             activation_checkpoint=True,
         )
@@ -474,7 +473,7 @@ class CompatibilityTests(unittest.TestCase):
             2,
             _config("diffpool").model,
             pool_method="diffpool",
-            ratio=0.5,
+            pool_params={"ratio": 0.5},
             avg_node_num=4,
             activation_checkpoint=True,
         )
@@ -492,9 +491,9 @@ class CompatibilityTests(unittest.TestCase):
         self.assertTrue(any(parameter.grad is not None for parameter in model.parameters()))
 
     def test_dense_adapter_preserves_scalar_values_in_sparse_form(self):
-        adapter = DensePoolAdapter(torch.nn.Linear(2, 2), "densepool")
+        adapter = load_pooling_profile("densepool").build(in_channels=2, k=2)
         output = adapter(
-            torch.randn(2, 2), torch.tensor([[0, 1], [1, 0]]), torch.zeros(2, dtype=torch.long),
+            torch.randn(2, 2), torch.tensor([[0, 1], [1, 0]]), batch=torch.zeros(2, dtype=torch.long),
         )
         self.assertEqual(output.edge_weight.numel(), output.edge_index.size(1))
 

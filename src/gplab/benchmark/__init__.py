@@ -1,5 +1,6 @@
 from .comparability import ComparabilityResult, ComparisonSetting, check_comparability
 from .compatibility import compatible_pools, validate_pool_compatibility
+from .compression import CompressionControl
 from .config import (
     ExperimentConfig,
     ModelConfig,
@@ -14,6 +15,7 @@ from .seeds import resolve_seeds
 
 __all__ = [
     "ExperimentConfig",
+    "CompressionControl",
     "ModelConfig",
     "PoolConfig",
     "SeedPolicy",

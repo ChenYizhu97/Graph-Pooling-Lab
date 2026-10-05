@@ -6,7 +6,7 @@ from gplab.data.profiles import get_dataset_profile
 from gplab.graph import ConnectivityType
 
 from .compatibility import pool_compatibility_error
-from .config import ModelConfig
+from .config import ModelConfig, PoolConfig
 
 
 @dataclass(frozen=True)
@@ -15,8 +15,9 @@ class ComparisonSetting:
 
     ``input_type=None`` searches all representations the dataset can provide;
     an explicit type restricts the comparison to that shared representation.
-    This describes the structural setting; callers must also hold dataset
-    instances, splits, and training rules fixed when executing the experiments.
+    Assumes compared runs share dataset instances, splits, task, evaluation, and
+    training protocols. This check only needs their graph/model settings;
+    learned pre-pooling representations need not be numerically identical.
     """
     dataset: str
     model: ModelConfig
@@ -35,7 +36,7 @@ class ComparabilityResult:
     are grouped by rejected input type, then pool; they can be nonempty even
     when another input makes the comparison valid.
     """
-    pools: tuple[str, ...]
+    pools: tuple[PoolConfig, ...]
     setting: ComparisonSetting
     input_types: frozenset[ConnectivityType]
     incompatibilities: dict[ConnectivityType, dict[str, str]]
@@ -46,20 +47,29 @@ class ComparabilityResult:
 
 
 def check_comparability(
-    pools: Iterable[str], setting: ComparisonSetting,
+    pools: Iterable[PoolConfig | str], setting: ComparisonSetting,
 ) -> ComparabilityResult:
     """Check all specified pools under the same setting without loading a dataset.
 
     A common input must be available from the dataset and accepted by every
     pool. For that input, every possible pool output must be consumable by the
     post-encoder. Individually compatible but disjoint inputs do not suffice.
-    Pool-size controls are experiment-specific, not a universal condition here.
+    Pooling-size controls are method-specific and do not affect this verdict.
+    Optional compression matching is resolved separately during preparation.
+    A bare profile name uses PoolConfig's default ratio of 0.5.
     """
     if isinstance(pools, str):
         raise TypeError("pools must be a collection of profile names, not one string.")
-    names = tuple(dict.fromkeys(pools))
-    if len(names) < 2:
-        raise ValueError("A comparison requires at least two distinct pooling profiles.")
+    configs = []
+    for pool in pools:
+        config = PoolConfig(pool) if isinstance(pool, str) else pool
+        if not isinstance(config, PoolConfig):
+            raise TypeError("pools must contain PoolConfig values or profile names.")
+        if config not in configs:
+            configs.append(config)
+    if len(configs) < 2:
+        raise ValueError("A comparison requires at least two distinct pooling configurations.")
+    names = tuple(dict.fromkeys(config.name for config in configs))
     dataset_types = get_dataset_profile(setting.dataset).connectivity_types
     if setting.input_type is not None:
         if setting.input_type not in dataset_types:
@@ -84,4 +94,4 @@ def check_comparability(
             incompatibilities[dataset_type] = errors
         else:
             input_types.add(dataset_type)
-    return ComparabilityResult(names, setting, frozenset(input_types), incompatibilities)
+    return ComparabilityResult(tuple(configs), setting, frozenset(input_types), incompatibilities)

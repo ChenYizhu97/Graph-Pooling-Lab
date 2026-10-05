@@ -9,14 +9,14 @@ from gplab.jobs import parse_job
 
 def training_config():
     return parse_job({"experiment": {
-        "dataset": "MUTAG", "pool": {"name": "nopool", "ratio": 0.5},
-        "training": {"runs": 1, "epochs": 1, "patience": 0},
+        "dataset": "MUTAG", "pool": {"name": "nopool", "params": {"ratio": 0.5}},
+        "training": {"num_runs": 1, "epochs": 1, "patience": 0},
     }}).experiment.training
 
 
 class RunResolutionTests(unittest.TestCase):
     def test_generated_runs_pair_seeds_with_complete_partitions(self):
-        training = replace(training_config(), runs=3)
+        training = replace(training_config(), num_runs=3)
         runs = resolve_runs(training, dataset_size=12)
         self.assertEqual(runs, resolve_runs(training, dataset_size=12))
         self.assertEqual(len(runs), 3)

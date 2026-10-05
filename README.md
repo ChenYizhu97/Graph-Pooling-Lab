@@ -83,8 +83,18 @@ NVIDIA driver. TOML configuration is parsed by standard-library `tomllib`.
 
 TopK and SAG are native TGP modules. TopK retains its normalized learned
 projection, including for one-channel inputs. SAG explicitly uses `GCNConv`
-and `tanh` (the generic pooling nonlinearity option does not override SAG).
-All poolers return `tgp.src.PoolingOutput`; the binary-to-binary signatures are unchanged.
+and `tanh` by default; explicit method parameters can override these choices.
+MinCut uses TGP's MinCut implementation. DiffPool reuses TGP preprocessing,
+reduction, connectivity, and losses with GPLab's graph-aware assignment; DensePool
+uses TGP's MLP assignment and coarsening without auxiliary losses. SparsePooling
+adds only its affine scorer to the TGP TopK pipeline. ASAP retains the PyG backend.
+All poolers return `tgp.src.PoolingOutput`; declared graph domains are unchanged.
+
+Dense poolers retain all fixed cluster slots and explicit zero-weight edges through
+a small output conversion override. TGP's default sparse conversion would remove
+them, changing structural statistics and GCN self-loop insertion. DiffPool retains
+the previous padded-node entropy mean and loss coefficients. Native loss keys are
+`link_loss`/`entropy_loss` and `cut_loss`/`ortho_loss`; no local loss formulas remain.
 The TGP version is pinned because a small connector fix corrects its selected-node edge
 ordering; run `uv run python -m unittest discover -s tests -p test_pooling_integration.py -v`
 when changing this backend.
@@ -92,7 +102,7 @@ when changing this backend.
 To inspect fixed-cluster dense pooling or run one-epoch integration jobs:
 
 ```bash
-uv run python scripts/check_dense_adapter.py
+uv run python scripts/check_dense_pooling.py
 POOLS="nopool sagpool" DATASETS="MUTAG" bash scripts/smoke_test.sh
 ```
 
@@ -105,7 +115,7 @@ may download TU datasets into `/tmp/TUDataset`.
 Run one human-oriented experiment:
 
 ```bash
-gplab-train --pool sagpool --pool-ratio 0.5 --dataset PROTEINS
+gplab-train --pool sagpool --pool-params '{"ratio": 0.5}' --dataset PROTEINS
 ```
 
 Append its `ExperimentRecord` to a JSONL log:
@@ -113,7 +123,7 @@ Append its `ExperimentRecord` to a JSONL log:
 ```bash
 gplab-train \
   --pool sparsepool \
-  --pool-ratio 0.5 \
+  --pool-params '{"ratio": 0.5}' \
   --dataset PROTEINS \
   --log-file runs/bench.jsonl \
   --tag baseline_proteins
@@ -124,7 +134,7 @@ Use the post-pooling-only model variant:
 ```bash
 gplab-train \
   --pool sagpool \
-  --pool-ratio 0.5 \
+  --pool-params '{"ratio": 0.5}' \
   --dataset PROTEINS \
   --model-variant plain
 ```
@@ -134,7 +144,7 @@ Run an exact seed list:
 ```bash
 gplab-train \
   --pool diffpool \
-  --pool-ratio 0.5 \
+  --pool-params '{"ratio": 0.5}' \
   --dataset PROTEINS \
   --seed-mode list \
   --seed-list 101,202,303
@@ -150,22 +160,85 @@ Each run leaves a final summary with its test accuracy. Progress writes to stder
 redirected output contains plain start/end lines, while JSON mode is silent until
 its response. Displaying progress never runs the model just to print its structure.
 
+## Pool Parameters
+
+A pool is configured as `{"name": "topkpool", "params": {"ratio": 0.5}}`.
+`params` is passed as constructor keyword arguments; omitting it uses
+`{"ratio": 0.5}`. There is no separate pooling activation field. For example,
+TopK accepts `{"ratio": 0.5, "nonlinearity": "relu", "multiplier": 2.0}`.
+Use `--pool-params '{"ratio": 0.5}'` in the CLI. Model width and dataset statistics
+are supplied by the framework, not by `params`.
+
+- TopK and SAG use TGP parameter names. SAG's JSON `GNN` can be `GCNConv`
+  (default) or `GraphConv`; scorer keyword arguments are forwarded.
+- SparsePooling uses `ratio` and `nonlinearity`. Its affine scorer feeds TGP's
+  `TopkSelect`, and the pool reuses TGP's reduction/connection pipeline. ASAP remains the PyG backend
+  and accepts its constructor options.
+- Dense methods accept native fixed `k`, or GPLab's `ratio` conversion using
+  dataset-average node count. Specify one, not both. TGP supplies their operators;
+  GPLab retains its configured assignment, output, and loss-weight conventions.
+- In the installed TGP/PyG backend, `0 < ratio < 1` is a fraction, while
+  `ratio >= 1` is a node count. In particular, `1.0` means one node, not 100%.
+  GPLab rejects nonintegral counts. Sparse selection uses `ceil(ratio * N)`;
+  dense fractional conversion preserves `max(1, int(ratio * average_N))`.
+- The no-pooling baseline retains all nodes. Explicit `{}` params use constructor
+  defaults; no ratio is required by core comparability.
+
+## Optional Compression Control
+
+Core comparability covers controlled experimental settings, equivalent pooling
+boundaries, method-valid inputs, and consumable outputs. Equal ratio, equal output
+size, and equal computational cost are not conditions of comparability.
+
+Compression is a separate experiment option. Omission defaults to `native`, which
+preserves each method's parameters. Request dataset-level approximate matching with:
+
+```json
+"compression": {"mode": "matched", "target_retention": 0.5}
+```
+
+Place this object inside `experiment` beside `pool`. CLI equivalents are
+`--compression-mode matched --target-retention 0.5`; TOML uses `[compression]`
+with `mode` and `target_retention`.
+
+Matched mode sets ratio-based methods to the target and fixed-K methods to
+`max(1, round(target_retention * avg_input_nodes))`. The average is computed over
+the loaded dataset, not each individual graph. This overrides native size
+parameters for those methods. TopK/SAG using `min_score`, identity pooling, and
+custom methods without a matching rule retain their parameters and are reported
+as `unmatched`; they remain eligible for core comparability. A 100% target is
+translated to a fractional backend value that keeps all nodes, avoiding TGP's
+special interpretation of `ratio=1.0` as a count.
+
+Records preserve the requested configuration plus `result.compression`, containing
+resolved pool parameters, dataset-average input size, and application status.
+`matched` means a budget was applied, not that it was achieved exactly. Final-test
+`structural_stats.mean_node_retention` reports measured retention, averaged per
+graph; summaries average this across runs. Stored/nonzero edge counts, training
+wall time, and peak training CUDA memory remain separate measurements. Equal node
+retention does not imply equal computation or memory use.
+
+Query groups use the shared experimental setting and compression protocol, not
+native ratio/K values or achieved sizes. A compression cohort is a reporting
+choice, not an additional comparability condition. Connectivity normalization
+still requires a separate profile with appropriate graph-transformation signatures.
+
 ## Job Configuration
 
 A Job JSON describes exactly one experiment. Optional fields are filled
 from GPLab's automation defaults before the job is validated.
 `experiment.training.activation_checkpoint` controls activation checkpointing;
 `log_file` and `tag` are top-level
-job fields. Optional `runs` supplies explicit `{seed, split}` entries for replay.
+job fields. Optional `fixed_runs` supplies explicit `{seed, split}` entries for replay.
 
 ```json
 {
   "experiment": {
     "dataset": "PROTEINS",
+    "input_type": "binary",
     "pool": {
       "name": "sagpool",
-      "ratio": 0.5,
-      "nonlinearity": "tanh"
+      "params": {"ratio": 0.5}
     },
     "model": {
       "hidden_features": 128,
@@ -178,7 +251,7 @@ job fields. Optional `runs` supplies explicit `{seed, split}` entries for replay
       "variant": "sum"
     },
     "training": {
-      "runs": 10,
+      "num_runs": 10,
       "lr": 0.0005,
       "batch_size": 32,
       "patience": 50,
@@ -205,7 +278,7 @@ Run from a file, inline JSON, or stdin:
 
 ```bash
 gplab-run-job --job-file job.json --output-format json
-gplab-run-job --job-json '{"experiment":{"dataset":"MUTAG","pool":{"name":"nopool","ratio":0.5},"training":{"runs":1,"epochs":1,"patience":0}}}' --output-format json
+gplab-run-job --job-json '{"experiment":{"dataset":"MUTAG","pool":{"name":"nopool","params":{"ratio":0.5}},"training":{"num_runs": 1,"epochs":1,"patience":0}}}' --output-format json
 cat job.json | gplab-run-job --job-stdin --output-format json
 ```
 
@@ -306,7 +379,7 @@ CUSTOM_POOL_PROFILE = PoolingProfile(
 )
 ```
 
-The builder receives `in_channels`, `ratio`, `avg_node_num`, and `nonlinearity`
+The builder receives keyword arguments `in_channels`, `avg_node_num`, and `**params`
 and must return a `torch.nn.Module` (or `None` for no pooling). A pooling module
 must:
 
@@ -328,6 +401,12 @@ a shared output class does not make arbitrary dense poolers interchangeable.
 both inputs while preserving their distinct output domains. For a given input,
 all declared outputs must be supported by the post-pooling encoder.
 
+Signatures describe method-valid graph transformations, not merely executable
+inputs. A pool need not use every input channel to select nodes: TopK and
+SparsePooling support both `U -> U` and `W -> W` because feature-based selection
+preserves the retained edges and their weights. Channel dependence and
+preservation describe method fidelity; they are not extra comparability tests.
+
 GPLab applies these declared signatures to custom profiles during the same
 compatibility validation as built-ins. See
 [`examples/custom_pool_plugin.py`](examples/custom_pool_plugin.py) for a complete
@@ -336,11 +415,12 @@ profile.
 To check a specific group under one shared dataset/model configuration:
 
 ```python
-from gplab.benchmark import ComparisonSetting, check_comparability
+from gplab.benchmark import ComparisonSetting, PoolConfig, check_comparability
 
 # model_config is the validated ModelConfig used by every compared method.
 setting = ComparisonSetting(dataset="MUTAG", model=model_config)
-result = check_comparability({"topkpool", "diffpool"}, setting)
+pools = [PoolConfig("topkpool", {"ratio": 0.5}), PoolConfig("diffpool", {"ratio": 0.5})]
+result = check_comparability(pools, setting)
 print(result.comparable, result.input_types, result.incompatibilities)
 ```
 
@@ -350,11 +430,24 @@ Scalar datasets can also provide binary topology by discarding edge weights.
 All pools must use the same member of `result.input_types`; passing
 `input_type=ConnectivityType.BINARY` to `ComparisonSetting` restricts the check
 to that choice. Rejection reasons are grouped by input type, then pool.
-`load_dataset(name, connectivity_type=...)` explicitly constructs a representation;
-the existing training entry points continue to load the native default.
+Choose that representation for every experiment with `experiment.input_type`
+in Job JSON, `--input-type binary|scalar` in the training CLI, or top-level
+`input_type = "binary"` / `"scalar"` in `config/experiment.toml`. CLI overrides
+TOML; the default is `binary`. Binary input uses topology without scalar weights;
+scalar input preserves meaningful edge weights and requires a dataset that can
+provide them. Built-in TU profiles currently provide only binary connectivity.
+The choice is recorded, replayed, and included in comparison grouping. Training
+passes it to `load_dataset(name, connectivity_type=...)`; it never chooses a
+different representation to accommodate a pool.
 
-This checks declared graph-domain compatibility. Keep the actual dataset
-instances, splits, and training rules shared when executing the comparison.
+Comparability assumes one shared experimental setting: dataset instances, splits,
+task, evaluation, optimization/model-selection protocol, and surrounding model
+specification. These shared conditions need not be rechecked by the graph-domain
+checker. Pre-pooling representations need not be numerically identical, and a
+topology-only pre-GNN may leave weights untouched for pooling. The post-GNN must
+consume every valid output type. Pooling activations are method-specific and do
+not separate comparison groups. Optional compression protocols define reporting
+cohorts independently of core comparability.
 The single-pool API is `benchmark.compatibility.validate_pool_compatibility`;
 `compatible_pools` lists compatible built-ins for one dataset/model setting.
 

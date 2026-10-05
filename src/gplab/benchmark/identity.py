@@ -22,8 +22,10 @@ def compute_comparison_group_key(record: dict) -> str:
                 if key not in {"seeds", "split", "activation_checkpoint"}}
     return _hash_payload({
         "dataset": config["dataset"],
+        "input_type": config["input_type"],
         "model": config["model"],
-        "pool_protocol": {key: config["pool"][key] for key in ("ratio", "nonlinearity")},
+        # Compression protocols are report cohorts, never a comparability predicate.
+        "compression": config["compression"],
         "training": training,
         "runs": [{"seed": run["seed"], "split": run["split"]}
                  for run in record["result"]["runs"]],

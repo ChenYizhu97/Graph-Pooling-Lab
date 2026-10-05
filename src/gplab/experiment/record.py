@@ -64,12 +64,23 @@ def summarize_record(record: ExperimentRecord) -> dict:
         "record_id": ensured["record_id"],
         "comparison_group_key": compute_comparison_group_key(ensured),
         "dataset": ensured["experiment"]["dataset"],
+        "input_type": ensured["experiment"]["input_type"],
         "pool": ensured["experiment"]["pool"]["name"],
-        "pool_ratio": ensured["experiment"]["pool"]["ratio"],
-        "pool_nonlinearity": ensured["experiment"]["pool"]["nonlinearity"],
+        "compression": ensured["experiment"]["compression"],
+        "compression_resolution": ensured["result"].get("compression"),
+        "mean_node_retention": float(np.mean([run["structural_stats"]["mean_node_retention"] for run in runs])),
+        "mean_output_edges": float(np.mean([
+            run["structural_stats"]["total_output_edges"] / run["structural_stats"]["num_graphs"] for run in runs
+        ])),
+        "mean_training_wall_time_seconds": float(np.mean([run["training_wall_time_seconds"] for run in runs])),
+        "peak_training_cuda_allocated_bytes": max(
+            (run["peak_training_cuda_allocated_bytes"] for run in runs
+             if run["peak_training_cuda_allocated_bytes"] is not None), default=None,
+        ),
+        "pool_params": ensured["experiment"]["pool"]["params"],
         "activation_checkpoint": bool(ensured["experiment"]["training"]["activation_checkpoint"]),
         "model_variant": ensured["experiment"]["model"]["variant"],
-        "runs": len(runs),
+        "num_runs": len(runs),
         "mean": float(ensured["result"]["mean"]),
         "std": float(ensured["result"]["std"]),
         "avg_best_epoch": float(np.mean(epochs)),

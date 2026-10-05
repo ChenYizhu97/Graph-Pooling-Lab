@@ -9,9 +9,12 @@ from torch_geometric.loader import DataLoader
 
 from gplab.benchmark.comparability import ComparisonSetting, check_comparability
 from gplab.benchmark.compatibility import pool_compatibility_error, validate_pool_compatibility
-from gplab.benchmark.config import ModelConfig
+from gplab.benchmark.config import ModelConfig, PoolConfig
 from gplab.data.profiles import DatasetProfile
+from gplab.experiment.execute import prepare_experiment
 from gplab.graph import ConnectivityType
+from gplab.jobs import parse_job
+from gplab.jobs.job import ExperimentJob
 from gplab.layers.conv.profiles import CONV_PROFILES, ConvProfile
 from gplab.layers.pool.profiles import POOLING_PROFILES, PoolingProfile, PoolingSignature
 
@@ -19,14 +22,14 @@ U, W = ConnectivityType.BINARY, ConnectivityType.SCALAR
 
 
 def _profile(*pairs):
-    return PoolingProfile(lambda *args: None, {PoolingSignature(*pair) for pair in pairs})
+    return PoolingProfile(lambda *args, **kwargs: None, {PoolingSignature(*pair) for pair in pairs})
 
 
 class SignatureCompatibilityTests(unittest.TestCase):
-    def test_builtin_domains_match_alignment_audit(self):
+    def test_builtin_method_valid_domains(self):
         expected = {
             "nopool": {(U, U), (W, W)},
-            "topkpool": {(U, U)}, "sagpool": {(U, U)}, "sparsepool": {(U, U)},
+            "topkpool": {(U, U), (W, W)}, "sagpool": {(U, U)}, "sparsepool": {(U, U), (W, W)},
             "asapool": {(U, W)}, "diffpool": {(U, W)},
             "mincutpool": {(U, W)}, "densepool": {(U, W)},
         }
@@ -35,17 +38,24 @@ class SignatureCompatibilityTests(unittest.TestCase):
                 self.assertEqual(POOLING_PROFILES[name].signatures,
                                  frozenset(PoolingSignature(*pair) for pair in pairs))
 
+    def test_feature_selection_accepts_weights_with_topology_only_pre_conv(self):
+        for pool in ("topkpool", "sparsepool"):
+            with self.subTest(pool=pool):
+                validate_pool_compatibility(dataset_type=W, pool_name=pool, pre_conv="GIN", post_conv="GCN")
+                with self.assertRaisesRegex(ValueError, "cannot consume scalar"):
+                    validate_pool_compatibility(dataset_type=W, pool_name=pool, pre_conv="GIN", post_conv="GIN")
+
     def test_signature_collections_are_immutable_and_deduplicated(self):
         signature = PoolingSignature(U, U)
         for collection in ([signature, signature], (signature,), {signature}, frozenset({signature})):
             with self.subTest(collection=type(collection).__name__):
-                profile = PoolingProfile(lambda *args: None, collection)
+                profile = PoolingProfile(lambda *args, **kwargs: None, collection)
                 self.assertIsInstance(profile.signatures, frozenset)
                 self.assertEqual(profile.signatures, frozenset({signature}))
         with self.assertRaises(ValueError):
-            PoolingProfile(lambda *args: None, set())
+            PoolingProfile(lambda *args, **kwargs: None, set())
         with self.assertRaises(TypeError):
-            PoolingProfile(lambda *args: None, {(U, U)})
+            PoolingProfile(lambda *args, **kwargs: None, {(U, U)})
         with self.assertRaises(TypeError):
             PoolingSignature("binary", W)
 
@@ -71,10 +81,10 @@ class SignatureCompatibilityTests(unittest.TestCase):
                 validate_pool_compatibility(dataset_type=U, pool_name="custom", pre_conv="GCN", post_conv="GIN")
             # Overlap is insufficient in either direction: a scalar-only encoder
             # cannot safely process the binary alternative either.
-            scalar_only = ConvProfile(lambda *args: None, frozenset({W}))
-            with patch("gplab.benchmark.compatibility.CONV_PROFILES", {**CONV_PROFILES, "scalar_only": scalar_only}):
+            scalar_only = ConvProfile(lambda *args, **kwargs: None, frozenset({W}))
+            with patch("gplab.benchmark.compatibility.CONV_PROFILES", {**CONV_PROFILES, "fixture:scalar_only": scalar_only}):
                 with self.assertRaisesRegex(ValueError, "cannot consume binary"):
-                    validate_pool_compatibility(dataset_type=U, pool_name="custom", pre_conv="GCN", post_conv="scalar_only")
+                    validate_pool_compatibility(dataset_type=U, pool_name="custom", pre_conv="GCN", post_conv="fixture:scalar_only")
 
     def test_raw_input_values_cannot_bypass_signature_matching(self):
         # str-enum equality must not let a string pass input membership while
@@ -97,10 +107,27 @@ class ComparabilityTests(unittest.TestCase):
                                  pre_conv="GCN", post_conv="GCN", pre_gnn=(4,), post_gnn=(8, 4), variant="plain")
         self.setting = ComparisonSetting(dataset="MUTAG", model=self.model)
 
+    def test_size_controls_do_not_affect_core_comparability(self):
+        first = PoolConfig("topkpool", {"ratio": 0.5, "nonlinearity": "relu", "multiplier": 2.0})
+        second = PoolConfig("sagpool", {"ratio": 0.5, "nonlinearity": "tanh"})
+        result = check_comparability([first, second], self.setting)
+        self.assertTrue(result.comparable)
+        self.assertEqual(result.pools, (first, second))
+        result = check_comparability([first, replace(second, params={"ratio": 0.25})], self.setting)
+        self.assertTrue(result.comparable)
+
+    def test_native_fixed_and_adaptive_size_controls_remain_comparable(self):
+        for second in (PoolConfig("topkpool", {"min_score": 0.2}),
+                       PoolConfig("topkpool", {"ratio": 0.5, "min_score": 0.2}),
+                       PoolConfig("diffpool", {"k": 8})):
+            with self.subTest(pool=second):
+                result = check_comparability([PoolConfig("sagpool"), second], self.setting)
+                self.assertTrue(result.comparable)
+
     def test_verdict_describes_pools_and_setting_not_one_signature(self):
         result = check_comparability(["topkpool", "diffpool"], self.setting)
         self.assertTrue(result.comparable)  # U and W outputs need not match each other.
-        self.assertEqual(result.pools, ("topkpool", "diffpool"))
+        self.assertEqual(tuple(pool.name for pool in result.pools), ("topkpool", "diffpool"))
         self.assertEqual(result.setting, self.setting)
         self.assertEqual(result.incompatibilities, {})
 
@@ -123,20 +150,20 @@ class ComparabilityTests(unittest.TestCase):
             result = check_comparability(["nopool", "topkpool", "diffpool"], self.setting)
         self.assertTrue(result.comparable)
         self.assertEqual(result.input_types, {U})
-        self.assertEqual(set(result.incompatibilities[W]), {"topkpool", "diffpool"})
+        self.assertEqual(set(result.incompatibilities[W]), {"diffpool"})
 
     def test_shared_input_must_exist_not_just_individual_compatibility(self):
-        profiles = {"binary_only": _profile((U, U)), "scalar_only": _profile((W, W))}
+        profiles = {"fixture:binary_only": _profile((U, U)), "fixture:scalar_only": _profile((W, W))}
         with patch("gplab.benchmark.comparability.get_dataset_profile", return_value=DatasetProfile(lambda: None, W)), \
                 patch("gplab.benchmark.compatibility.load_pooling_profile", side_effect=profiles.__getitem__):
             result = check_comparability(profiles, self.setting)
         self.assertFalse(result.comparable)
         self.assertEqual(result.input_types, frozenset())
-        self.assertEqual(set(result.incompatibilities[U]), {"scalar_only"})
-        self.assertEqual(set(result.incompatibilities[W]), {"binary_only"})
+        self.assertEqual(set(result.incompatibilities[U]), {"fixture:scalar_only"})
+        self.assertEqual(set(result.incompatibilities[W]), {"fixture:binary_only"})
 
     def test_outputs_filter_shared_inputs_and_explicit_choice_cannot_fallback(self):
-        profiles = {"a": _profile((U, U), (W, W)), "b": _profile((U, U), (W, W))}
+        profiles = {"fixture:a": _profile((U, U), (W, W)), "fixture:b": _profile((U, U), (W, W))}
         with patch("gplab.benchmark.comparability.get_dataset_profile", return_value=DatasetProfile(lambda: None, W)), \
                 patch("gplab.benchmark.compatibility.load_pooling_profile", side_effect=profiles.__getitem__):
             self.assertEqual(check_comparability(profiles, self.setting).input_types, {U, W})
@@ -145,7 +172,7 @@ class ComparabilityTests(unittest.TestCase):
             self.assertFalse(check_comparability(profiles, replace(setting, input_type=W)).comparable)
 
     def test_binary_dataset_cannot_provide_scalar_input(self):
-        profiles = {"a": _profile((W, W)), "b": _profile((W, W))}
+        profiles = {"fixture:a": _profile((W, W)), "fixture:b": _profile((W, W))}
         with patch("gplab.benchmark.compatibility.load_pooling_profile", side_effect=profiles.__getitem__):
             self.assertFalse(check_comparability(profiles, self.setting).comparable)
         with self.assertRaisesRegex(ValueError, "cannot provide scalar"):
@@ -160,10 +187,37 @@ class ComparabilityTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             check_comparability("nopool", self.setting)
         result = check_comparability(["nopool", "topkpool", "nopool"], self.setting)
-        self.assertEqual(result.pools, ("nopool", "topkpool"))
+        self.assertEqual(tuple(pool.name for pool in result.pools), ("nopool", "topkpool"))
 
 
 class DatasetRepresentationTests(unittest.TestCase):
+    def test_experiment_materializes_and_replays_selected_representation(self):
+        graph = Data(x=torch.ones(2, 1), edge_index=torch.tensor([[0, 1], [1, 0]]),
+                     edge_weight=torch.tensor([0.25, 0.75]), y=torch.tensor([1]))
+        source = InMemoryDataset()
+        source.data, source.slices = source.collate([graph.clone() for _ in range(12)])
+        with patch("gplab.data.profiles.DATASET_PROFILES", {"weighted": DatasetProfile(lambda: source, W)}):
+            for input_type in (U, W):
+                with self.subTest(input_type=input_type):
+                    job = parse_job({"experiment": {
+                        "dataset": "weighted", "input_type": input_type.value,
+                        "pool": {"name": "topkpool", "params": {"ratio": 0.5}},
+                        "model": {"pre_conv": "GIN", "post_conv": "GCN"},
+                        "training": {"num_runs": 1, "epochs": 1, "patience": 0},
+                    }})
+                    self.assertEqual(parse_job(job.to_mapping()), job)
+                    prepared = prepare_experiment(job.experiment)
+                    self.assertEqual(prepared.dataset.connectivity_type, input_type)
+                    if input_type is U:
+                        self.assertIsNone(prepared.dataset[0].edge_weight)
+                    else:
+                        self.assertTrue(torch.equal(prepared.dataset[0].edge_weight, graph.edge_weight))
+                    record = {"experiment": job.experiment.to_mapping(), "record_id": "source", "tag": None,
+                              "result": {"runs": [run.to_mapping() for run in prepared.runs]}}
+                    replay = ExperimentJob.from_record(record)
+                    self.assertEqual(replay.experiment.input_type, input_type)
+                    self.assertEqual(prepare_experiment(replay.experiment, replay.fixed_runs).runs, prepared.runs)
+
     def test_binary_projection_preserves_source_topology_and_split_batches(self):
         graph = Data(x=torch.ones(2, 1), edge_index=torch.tensor([[0, 1], [1, 0]]),
                      edge_weight=torch.tensor([0.25, 0.75]), y=torch.tensor([1]))

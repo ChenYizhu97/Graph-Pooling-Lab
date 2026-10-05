@@ -12,6 +12,7 @@ from gplab.benchmark.compatibility import (
     resolve_dataset_connectivity_type,
     validate_pool_compatibility,
 )
+from gplab.benchmark.compression import resolve_compression
 from gplab.benchmark.config import ExperimentConfig, TrainingConfig
 from gplab.benchmark.runs import RunSpec, resolve_runs
 from gplab.data.dataset import load_dataset, split_dataset
@@ -35,6 +36,7 @@ class PreparedExperiment:
     dataset: Dataset
     dataset_stats: dict
     runs: tuple[RunSpec, ...]
+    compression: dict
 
 
 def _summarize_dataset(dataset) -> dict:
@@ -54,7 +56,7 @@ def prepare_experiment(
     fixed_runs: tuple[RunSpec, ...] | None = None,
 ) -> PreparedExperiment:
     """Load data, check pool connectivity, and resolve or validate all requested runs."""
-    dataset = load_dataset(config.dataset)
+    dataset = load_dataset(config.dataset, connectivity_type=config.input_type)
     dataset_stats = _summarize_dataset(dataset)
     validate_pool_compatibility(
         dataset_type=resolve_dataset_connectivity_type(dataset),
@@ -65,6 +67,8 @@ def prepare_experiment(
     return PreparedExperiment(
         config=config, dataset=dataset, dataset_stats=dataset_stats,
         runs=resolve_runs(config.training, len(dataset), fixed_runs),
+        compression=resolve_compression(config.pool.name, config.pool.params, config.compression,
+                                        dataset_stats["avg_node_num"]),
     )
 
 
@@ -76,8 +80,7 @@ def _build_model(
         prepared.dataset_stats["num_node_features"],
         prepared.dataset_stats["num_classes"],
         pool_method=config.pool.name,
-        ratio=config.pool.ratio,
-        pool_nonlinearity=config.pool.nonlinearity,
+        pool_params=prepared.compression["pool_params"],
         config=config.model,
         avg_node_num=prepared.dataset_stats["avg_node_num"],
         activation_checkpoint=config.training.activation_checkpoint,
@@ -202,7 +205,7 @@ def run_experiment(
     run_results = []
     with TrainingProgress(
         f"{config.dataset} · {config.pool.name} · {device}",
-        config.training.runs, config.training.epochs, enabled=emit_text,
+        config.training.num_runs, config.training.epochs, enabled=emit_text,
     ) as progress:
         for run_idx, run in enumerate(prepared.runs, start=1):
             progress.start_run(run_idx, run.seed)
@@ -215,6 +218,7 @@ def run_experiment(
 
     # Training materializes lazy parameters, so count them only after execution.
     result = build_result(run_results, trainable_parameters=count_trainable_parameters(model))
+    result["compression"] = prepared.compression
     del model
     if device.type == "cuda":
         torch.cuda.empty_cache()

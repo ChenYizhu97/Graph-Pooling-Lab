@@ -1,11 +1,15 @@
 """Validated experiment settings, independent of logging and resolved runs."""
 from __future__ import annotations
 
+import json
 import math
-from dataclasses import asdict, dataclass
+from copy import deepcopy
+from dataclasses import asdict, dataclass, field
 from typing import Optional
 
+from gplab.benchmark.compression import CompressionControl
 from gplab.data.profiles import get_dataset_profile
+from gplab.graph import ConnectivityType
 from gplab.layers.conv.profiles import CONV_PROFILES
 from gplab.layers.pool.profiles import validate_pooling_profile_name
 from gplab.utils.validation import (
@@ -34,10 +38,10 @@ class ModelConfig:
             raise ValueError("experiment.model.nonlinearity must be non-empty.")
         if not 0.0 <= self.p_dropout < 1.0:
             raise ValueError("experiment.model.p_dropout must be in [0, 1).")
-        for field, value in (("pre_conv", self.pre_conv), ("post_conv", self.post_conv)):
+        for field_name, value in (("pre_conv", self.pre_conv), ("post_conv", self.post_conv)):
             if value not in CONV_PROFILES:
                 raise ValueError(
-                    f"Unsupported experiment.model.{field} '{value}'. "
+                    f"Unsupported experiment.model.{field_name} '{value}'. "
                     f"Supported layers: {', '.join(CONV_PROFILES)}."
                 )
         if not self.pre_gnn or any(width <= 0 for width in self.pre_gnn):
@@ -79,23 +83,26 @@ class ModelConfig:
 
 @dataclass(frozen=True)
 class PoolConfig:
-    """Pooling profile and reduction settings that contribute to benchmark identity."""
+    """Method name and native JSON constructor parameters, independent of comparability."""
     name: str
-    ratio: float
-    nonlinearity: str = "tanh"
+    params: dict = field(default_factory=lambda: {"ratio": 0.5})
 
     def __post_init__(self) -> None:
         validate_pooling_profile_name(self.name)
-        validate_pool_ratio_value(self.ratio)
-        if not self.nonlinearity:
-            raise ValueError("experiment.pool.nonlinearity must be non-empty.")
+        if not isinstance(self.params, dict):
+            raise ValueError("experiment.pool.params must be an object.")
+        if "in_channels" in self.params or "avg_node_num" in self.params:
+            raise ValueError("experiment.pool.params cannot override model width or dataset statistics.")
+        try:
+            json.dumps(self.params, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("experiment.pool.params must contain finite JSON values.") from exc
+        if "ratio" in self.params:
+            validate_pool_ratio_value(self.params["ratio"])
+        object.__setattr__(self, "params", deepcopy(self.params))
 
     def to_mapping(self) -> dict:
-        return {
-            "name": self.name,
-            "ratio": self.ratio,
-            "nonlinearity": self.nonlinearity,
-        }
+        return {"name": self.name, "params": deepcopy(self.params)}
 
 
 @dataclass(frozen=True)
@@ -171,7 +178,7 @@ class SeedPolicy:
 @dataclass(frozen=True)
 class TrainingConfig:
     """Training budget, optimizer settings, split fractions, and run seed policy."""
-    runs: int
+    num_runs: int
     lr: float
     batch_size: int
     patience: int
@@ -182,8 +189,8 @@ class TrainingConfig:
     activation_checkpoint: bool = False
 
     def __post_init__(self) -> None:
-        if self.runs <= 0:
-            raise ValueError("experiment.training.runs must be positive.")
+        if self.num_runs <= 0:
+            raise ValueError("experiment.training.num_runs must be positive.")
         if not math.isfinite(self.lr) or self.lr <= 0:
             raise ValueError("experiment.training.lr must be a positive finite number.")
         if self.batch_size <= 0:
@@ -193,13 +200,13 @@ class TrainingConfig:
         if self.epochs <= 0:
             raise ValueError("experiment.training.epochs must be positive.")
         if self.seeds.mode == "list" and self.seeds.values is not None:
-            if len(self.seeds.values) != self.runs:
-                raise ValueError("experiment.training.seeds.values length must equal experiment.training.runs.")
+            if len(self.seeds.values) != self.num_runs:
+                raise ValueError("experiment.training.seeds.values length must equal experiment.training.num_runs.")
 
     @classmethod
     def from_mapping(cls, value: dict) -> TrainingConfig:
         return cls(
-            runs=int(value["runs"]),
+            num_runs=int(value["num_runs"]),
             lr=float(value["lr"]),
             batch_size=int(value["batch_size"]),
             patience=int(value["patience"]),
@@ -211,7 +218,7 @@ class TrainingConfig:
 
     def to_mapping(self) -> dict:
         return {
-            "runs": self.runs,
+            "num_runs": self.num_runs,
             "lr": self.lr,
             "batch_size": self.batch_size,
             "patience": self.patience,
@@ -229,18 +236,33 @@ class ExperimentConfig:
     pool: PoolConfig
     model: ModelConfig
     training: TrainingConfig
+    # The shared graph representation exposed to pooling, independent of pre-conv consumption.
+    input_type: ConnectivityType = ConnectivityType.BINARY
+    compression: CompressionControl = field(default_factory=CompressionControl)
 
     def __post_init__(self) -> None:
-        get_dataset_profile(self.dataset)
+        profile = get_dataset_profile(self.dataset)
+        if not isinstance(self.input_type, ConnectivityType):
+            raise TypeError("experiment.input_type must be a ConnectivityType.")
+        if self.input_type not in profile.connectivity_types:
+            raise ValueError(
+                f"experiment.input_type requests {self.input_type.value} connectivity, "
+                f"but dataset '{self.dataset}' cannot provide it."
+            )
 
     @classmethod
     def from_mapping(cls, value: dict) -> ExperimentConfig:
+        try:
+            input_type = ConnectivityType(value.get("input_type", "binary"))
+        except ValueError as exc:
+            raise ValueError("experiment.input_type must be 'binary' or 'scalar'.") from exc
         return cls(
             dataset=str(value["dataset"]),
+            input_type=input_type,
+            compression=CompressionControl(**value.get("compression", {})),
             pool=PoolConfig(
                 name=str(value["pool"]["name"]),
-                ratio=float(value["pool"]["ratio"]),
-                nonlinearity=str(value["pool"]["nonlinearity"]),
+                params=value["pool"].get("params", {"ratio": 0.5}),
             ),
             model=ModelConfig.from_mapping(value["model"]),
             training=TrainingConfig.from_mapping(value["training"]),
@@ -249,6 +271,8 @@ class ExperimentConfig:
     def to_mapping(self) -> dict:
         return {
             "dataset": self.dataset,
+            "input_type": self.input_type.value,
+            "compression": self.compression.to_mapping(),
             "pool": self.pool.to_mapping(),
             "model": self.model.to_mapping(),
             "training": self.training.to_mapping(),

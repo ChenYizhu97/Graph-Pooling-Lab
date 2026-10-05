@@ -24,6 +24,11 @@ Use native `tgp.src.PoolingOutput`; GPLab only re-exports it. Pool calls use
 sparse output graph tensors. Selection metadata stays in `so`; auxiliary losses
 are named, already-weighted scalar tensors in `loss`, summed by the classifier.
 TopK/SAG are native TGP modules with a small connector ordering correction.
+SparsePooling reuses the same pipeline with an affine scorer. MinCut is configured
+TGP MinCut; DiffPool uses TGP components with graph-aware assignment and the existing
+padded entropy mean; DensePool uses TGP coarsening without auxiliary losses.
+Dense outputs preserve all K slots and explicit zero-weight edges. Loss keys follow
+TGP: `link_loss`/`entropy_loss` and `cut_loss`/`ortho_loss`. ASAP remains PyG-backed.
 
 ### POOL COMPARABILITY
 
@@ -34,17 +39,23 @@ that input, not the union of outputs from unrelated input domains.
 
 The Python API `check_comparability(pools, ComparisonSetting(dataset, model))`
 returns shared valid `input_types` plus incompatibilities grouped by input type
-and pool. A verdict is true iff at least one shared input is valid. Dataset
+and pool. A verdict is true when at least one shared input is valid. Pooling
+ratio, fixed K, and adaptive thresholds do not affect this verdict. Dataset
 `connectivity_type` is native/default; `connectivity_types` lists available
 representations (binary: `{U}`, scalar: `{U, W}`). Every compared pool must use
 the same representation; individually compatible but disjoint inputs fail.
 An explicit `ComparisonSetting.input_type` prevents fallback to another type.
 `load_dataset(name, connectivity_type=...)` projects scalar to binary by keeping
 edges and dropping weights after existing transforms. Training entry points
-still use the native default; comparability does not select runtime inputs.
+use `experiment.input_type` (`binary` by default, or `scalar`), persist it, and
+replay the same choice. CLI `--input-type` overrides top-level `input_type` in the
+experiment TOML. Choose the same representation for every compared method;
+comparability does not select runtime inputs or fall back automatically.
 `validate_pool_compatibility` checks one pool before execution. Neither API
 substitutes for controlling concrete splits and training rules across runs.
-Built-in scalar-input domains are not broadened merely by supporting sets.
+TopK and sparsepool support U -> U and W -> W: feature-based selection preserves
+retained edge weights without needing to consume them for selection. Other
+scalar-input domains require method-fidelity evidence, not API support alone.
 
 ### BUILTIN_POOLS
 
@@ -78,12 +89,12 @@ Optional top-level fields:
 
 - `log_file`: string or null, append destination for this job only
 - `tag`: string or null
-- `runs`: null or a nonempty array of `{seed, split}` objects for exact replay
+- `fixed_runs`: null or a nonempty array of `{seed, split}` objects for exact replay
 - `source_record_id`: string or null, the record being replayed
 
 Each explicit run contains an integer `seed` and a `split` object with nonempty
 integer arrays `train`, `val`, and `test`. The number of runs must equal
-`experiment.training.runs`. Once data is loaded, partitions must cover every
+`experiment.training.num_runs`. Once data is loaded, partitions must cover every
 example exactly once, without overlaps or out-of-range indices. Explicit runs
 bypass seed/split generation; they do not rewrite the requested seed policy.
 
@@ -96,15 +107,41 @@ Required `experiment` fields:
 Optional `experiment` fields:
 
 - `model`
+- `input_type`: `binary` (default) or `scalar`; the dataset must provide the chosen representation
+- `compression`: optional size-control protocol, documented below
 
 Required `experiment.pool` fields:
 
 - `name`: string
-- `ratio`: number in `(0, 1]`
 
 Optional `experiment.pool` fields:
 
-- `nonlinearity`: non-empty string
+- `params`: JSON object of method constructor arguments; defaults to `{"ratio": 0.5}`.
+  There are no top-level `ratio` or `nonlinearity` fields. CLI equivalent:
+  `--pool-params '{"ratio": 0.5}'`.
+
+All pool parameters are recorded and replayed, but none are equality conditions
+for core comparability. Native ratios below one are fractions; values >= one are
+integer node counts (including `1.0`, which means one node). Dense pools accept `k`.
+
+Optional `experiment.compression` fields:
+
+- `mode`: `native` (default) or `matched`.
+- `target_retention`: required in matched mode, a number in (0, 1]; absent/null in native mode.
+
+Matched mode sets ratio-based methods to the target and fixed-K methods to
+`max(1, round(target_retention * avg_input_nodes))`, using the loaded dataset's
+average size. Adaptive/unknown methods may remain unmatched; do not reject their
+comparability. This matches an approximate dataset-level budget, not per-graph
+output sizes. CLI: `--compression-mode matched --target-retention 0.5`.
+TOML: `[compression]` with `mode` and `target_retention`.
+
+`result.compression` records `status` (`native`, `matched`, or `unmatched`),
+`pool_params` actually used, and `avg_input_nodes`. The requested configuration
+remains in `experiment`; replay resolves the same protocol. Actual final-test
+retention is in each run's `structural_stats.mean_node_retention` and query
+summaries. Report runtime, memory, and edges separately: equal node retention
+is not equal cost.
 
 Optional `experiment.model` fields:
 
@@ -119,7 +156,7 @@ Optional `experiment.model` fields:
 
 Required `experiment.training` fields:
 
-- `runs`: integer greater than 0
+- `num_runs`: integer greater than 0
 - `patience`: integer greater than or equal to 0
 - `epochs`: integer greater than 0
 
@@ -144,10 +181,10 @@ Minimal example:
     "dataset": "MUTAG",
     "pool": {
       "name": "nopool",
-      "ratio": 0.5
+      "params": {"ratio": 0.5}
     },
     "training": {
-      "runs": 1,
+      "num_runs": 1,
       "epochs": 1,
       "patience": 0
     }
@@ -161,10 +198,10 @@ Complete example:
 {
   "experiment": {
     "dataset": "PROTEINS",
+    "input_type": "binary",
     "pool": {
       "name": "sagpool",
-      "ratio": 0.5,
-      "nonlinearity": "tanh"
+      "params": {"ratio": 0.5}
     },
     "model": {
       "hidden_features": 128,
@@ -177,7 +214,7 @@ Complete example:
       "variant": "sum"
     },
     "training": {
-      "runs": 10,
+      "num_runs": 10,
       "lr": 0.0005,
       "batch_size": 32,
       "patience": 50,
@@ -197,7 +234,7 @@ Complete example:
   },
   "log_file": null,
   "tag": null,
-  "runs": null,
+  "fixed_runs": null,
   "source_record_id": null
 }
 ```
@@ -287,7 +324,7 @@ errors instead of being treated as partial records.
 
 Replay rebuilds an `ExperimentJob` from `experiment` and the
 seed/split pairs in `result.runs`. The requested seed policy remains unchanged.
-The replay job's `runs` field supplies the exact recorded repetitions, while
+The replay job's `fixed_runs` field supplies the exact recorded repetitions, while
 `source_record_id` preserves provenance. The source log destination is never reused.
 
 ### SUMMARY_FIELDS
@@ -296,7 +333,8 @@ The replay job's `runs` field supplies the exact recorded repetitions, while
 `test_acc` values across runs.
 
 `comparison_group_key` groups matching accuracy-comparison settings, excluding
-pool name and activation checkpointing. It uses actual seeds and splits and does
+all native pool parameters and activation checkpointing. It includes the chosen
+input type and compression protocol as report cohorts, uses actual seeds and splits, and does
 not certify structural comparability. It is derived at query time, never persisted.
 
 Query summaries include:
@@ -304,12 +342,18 @@ Query summaries include:
 - `record_id`
 - `comparison_group_key`
 - `dataset`
+- `input_type`
 - `pool`
-- `pool_ratio`
-- `pool_nonlinearity`
+- `compression`
+- `compression_resolution`
+- `mean_node_retention`
+- `mean_output_edges`
+- `mean_training_wall_time_seconds`
+- `peak_training_cuda_allocated_bytes`
+- `pool_params`
 - `activation_checkpoint`
 - `model_variant`
-- `runs`
+- `num_runs`
 - `mean`
 - `std`
 - `avg_best_epoch`
@@ -357,9 +401,9 @@ Handled failures use this envelope:
   "error": {
     "type": "config_error",
     "message": "Human-readable error.",
-    "field": "experiment.pool.ratio",
+    "field": "experiment.pool.params.ratio",
     "expected": "finite number",
-    "missing": ["ratio"],
+    "missing": ["name"],
     "unknown": ["extra"],
     "details": {
       "source": "job_json"
@@ -407,10 +451,10 @@ Invalid job response shape:
   "kind": "job_error",
   "error": {
     "type": "config_error",
-    "message": "Missing required experiment.pool field(s): ratio.",
+    "message": "Missing required experiment.pool field(s): name.",
     "field": "experiment.pool",
-    "expected": "required fields: name, ratio",
-    "missing": ["ratio"],
+    "expected": "required fields: name",
+    "missing": ["name"],
     "details": {
       "job_file": "job.json",
       "source": "job_json"
@@ -461,7 +505,7 @@ gplab-replay --log-file <path> --record-id <id> --output-format json
 ```
 
 Use `--run` to execute the replay. The exported Job preserves the original
-configuration and includes concrete seeds and splits in its top-level `runs`.
+configuration and includes concrete seeds and splits in its top-level `fixed_runs`.
 It can also be submitted directly to `gplab-run-job`.
 
 Output kind: `replay_result`. The top-level `job` is the replayable Job JSON,

@@ -25,8 +25,7 @@ class GraphClassifier(torch.nn.Module):
         n_classes: int,
         config: ModelConfig,
         pool_method: str,
-        ratio: float = 0.5,
-        pool_nonlinearity: str = "tanh",
+        pool_params: Optional[dict] = None,
         avg_node_num: Optional[float] = None,
         activation_checkpoint: bool = False,
         norm: str = "layer_norm",
@@ -49,9 +48,8 @@ class GraphClassifier(torch.nn.Module):
         self.pre_gnn = self._build_pre_gnn(config)
         self.pool_module = pool_profile.build(
             in_channels=self.hidden_features,
-            ratio=ratio,
             avg_node_num=avg_node_num,
-            nonlinearity=pool_nonlinearity,
+            **(pool_params or {}),
         )
         self.pre_conv = pre_conv_profile.build(
             self.hidden_features,

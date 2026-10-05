@@ -1,3 +1,4 @@
+import json
 import tomllib
 from typing import Annotated, Optional
 
@@ -23,15 +24,21 @@ def main(
         Optional[str],
         typer.Option(help="Pooling method name or <module:profile> for custom pooling."),
     ] = None,
-    pool_ratio: Annotated[
-        Optional[float],
-        typer.Option(help="Pooling ratio for built-in or custom pooling methods."),
-    ] = None,
-    pool_nonlinearity: Annotated[
+    pool_params: Annotated[
         Optional[str],
-        typer.Option(help="Pooling score nonlinearity, independent of the model activation."),
+        typer.Option(help='JSON constructor parameters, e.g. {"ratio": 0.5, "multiplier": 2.0}.'),
     ] = None,
     dataset: Annotated[Optional[str], typer.Option()] = None,
+    input_type: Annotated[
+        Optional[str],
+        typer.Option(help="Graph representation at pooling: binary or scalar. Overrides the experiment TOML."),
+    ] = None,
+    compression_mode: Annotated[
+        Optional[str], typer.Option(help="Compression control: native or matched."),
+    ] = None,
+    target_retention: Annotated[
+        Optional[float], typer.Option(help="Dataset-level node retention target for matched compression."),
+    ] = None,
     model_variant: Annotated[Optional[str], typer.Option(help="Model variant: sum or plain.")] = None,
     log_file: Annotated[
         Optional[str],
@@ -100,10 +107,12 @@ def main(
                 model_config=model_config_data,
                 training_config=experiment_config_data,
                 pool=pool,
-                pool_ratio=pool_ratio,
-                pool_nonlinearity=pool_nonlinearity,
+                pool_params=None if pool_params is None else json.loads(pool_params),
                 activation_checkpoint=activation_checkpoint,
                 dataset_name=dataset,
+                input_type=input_type,
+                compression_mode=compression_mode,
+                target_retention=target_retention,
                 model_variant=model_variant,
                 tag=tag,
                 log_file=log_file,

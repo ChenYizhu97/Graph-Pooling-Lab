@@ -17,7 +17,7 @@ class ExperimentJob:
     @classmethod
     def from_mapping(cls, value: dict) -> "ExperimentJob":
         """Construct a job from JSON already validated by parse_job."""
-        runs = value.get("runs")
+        runs = value.get("fixed_runs")
         return cls(
             experiment=ExperimentConfig.from_mapping(value["experiment"]),
             log_file=value.get("log_file"), tag=value.get("tag"),
@@ -43,6 +43,6 @@ class ExperimentJob:
         return {
             "experiment": self.experiment.to_mapping(),
             "log_file": self.log_file, "tag": self.tag,
-            "runs": None if self.fixed_runs is None else [run.to_mapping() for run in self.fixed_runs],
+            "fixed_runs": None if self.fixed_runs is None else [run.to_mapping() for run in self.fixed_runs],
             "source_record_id": self.source_record_id,
         }

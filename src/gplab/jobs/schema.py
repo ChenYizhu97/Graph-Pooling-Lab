@@ -9,18 +9,18 @@ from .defaults import (
     AUTOMATION_TRAINING_DEFAULTS,
 )
 
-JOB_TOP_LEVEL_FIELDS = {"experiment", "log_file", "tag", "runs", "source_record_id"}
+JOB_TOP_LEVEL_FIELDS = {"experiment", "log_file", "tag", "fixed_runs", "source_record_id"}
 JOB_REQUIRED_TOP_LEVEL_FIELDS = {"experiment"}
-EXPERIMENT_FIELDS = {"dataset", "pool", "model", "training"}
+EXPERIMENT_FIELDS = {"dataset", "input_type", "pool", "model", "training", "compression"}
 EXPERIMENT_REQUIRED_FIELDS = {"dataset", "pool", "training"}
-POOL_FIELDS = {"name", "ratio", "nonlinearity"}
-POOL_REQUIRED_FIELDS = {"name", "ratio"}
+POOL_FIELDS = {"name", "params"}
+POOL_REQUIRED_FIELDS = {"name"}
 POOL_DEFAULTS = {
-    "nonlinearity": "tanh",
+    "params": {"ratio": 0.5},
 }
 MODEL_FIELDS = set(AUTOMATION_MODEL_DEFAULTS)
 TRAINING_FIELDS = set(AUTOMATION_TRAINING_DEFAULTS)
-TRAINING_REQUIRED_FIELDS = {"runs", "epochs", "patience"}
+TRAINING_REQUIRED_FIELDS = {"num_runs", "epochs", "patience"}
 SPLIT_FIELDS = {"train", "val"}
 SEED_FIELDS = {"mode", "base", "values", "allow_duplicates"}
 
@@ -208,13 +208,24 @@ def normalize_job_shape(job: dict) -> dict:
     }
     _reject_unknown_fields(seeds, allowed=SEED_FIELDS, label="experiment.training.seeds")
 
+    compression = {"mode": "native", "target_retention": None,
+                   **require_mapping(experiment.get("compression", {}), label="experiment.compression")}
+    _reject_unknown_fields(compression, allowed={"mode", "target_retention"}, label="experiment.compression")
+
     normalized = {
         "experiment": {
             "dataset": _require_string(experiment["dataset"], field_name="experiment.dataset"),
-            "pool": _normalize_fields(pool, "experiment.pool", {
-                "name": _require_string, "ratio": _normalize_float,
-                "nonlinearity": _require_string,
-            }),
+            "input_type": _require_string(experiment.get("input_type", "binary"), field_name="experiment.input_type"),
+            "compression": {
+                "mode": _require_string(compression["mode"], field_name="experiment.compression.mode"),
+                "target_retention": None if compression["target_retention"] is None else _normalize_float(
+                    compression["target_retention"], field_name="experiment.compression.target_retention",
+                ),
+            },
+            "pool": {
+                "name": _require_string(pool["name"], field_name="experiment.pool.name"),
+                "params": deepcopy(require_mapping(pool["params"], label="experiment.pool.params")),
+            },
             "model": _normalize_fields(model, "experiment.model", {
                 "hidden_features": _normalize_int, "nonlinearity": _require_string,
                 "p_dropout": _normalize_float, "pre_conv": _require_string,
@@ -223,7 +234,7 @@ def normalize_job_shape(job: dict) -> dict:
             }),
             "training": {
                 **_normalize_fields(training, "experiment.training", {
-                    "runs": _normalize_int, "lr": _normalize_float,
+                    "num_runs": _normalize_int, "lr": _normalize_float,
                     "batch_size": _normalize_int, "patience": _normalize_int,
                     "epochs": _normalize_int, "activation_checkpoint": _normalize_bool,
                 }),
@@ -248,7 +259,7 @@ def normalize_job_shape(job: dict) -> dict:
         field: _normalize_optional_string(raw.get(field), field_name=field)
         for field in ("log_file", "tag", "source_record_id")
     })
-    normalized["runs"] = _normalize_runs(raw.get("runs"))
+    normalized["fixed_runs"] = _normalize_fixed_runs(raw.get("fixed_runs"))
 
     try:
         validate_seed_mode_value(normalized["experiment"]["training"]["seeds"]["mode"])
@@ -261,15 +272,15 @@ def normalize_job_shape(job: dict) -> dict:
     return normalized
 
 
-def _normalize_runs(value) -> list[dict] | None:
+def _normalize_fixed_runs(value) -> list[dict] | None:
     """Validate explicit replay runs; dataset-dependent partition checks happen at preparation."""
     if value is None:
         return None
     if not isinstance(value, list) or not value:
-        raise JobSchemaError("runs must be a non-empty array.", field="runs", expected="non-empty array")
+        raise JobSchemaError("fixed_runs must be a non-empty array.", field="fixed_runs", expected="non-empty array")
     runs = []
     for index, value in enumerate(value):
-        label = f"runs[{index}]"
+        label = f"fixed_runs[{index}]"
         run = require_mapping(value, label=label)
         _reject_unknown_fields(run, allowed={"seed", "split"}, label=label)
         _require_keys(run, required={"seed", "split"}, label=label)

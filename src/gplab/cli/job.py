@@ -1,5 +1,6 @@
 from typing import Optional
 
+from gplab.benchmark.compression import CompressionControl
 from gplab.benchmark.config import (
     ExperimentConfig,
     ModelConfig,
@@ -8,6 +9,7 @@ from gplab.benchmark.config import (
     SplitConfig,
     TrainingConfig,
 )
+from gplab.graph import ConnectivityType
 from gplab.jobs.job import ExperimentJob
 
 
@@ -16,8 +18,7 @@ def build_cli_job(
     model_config: dict,
     training_config: dict,
     pool: Optional[str],
-    pool_ratio: Optional[float],
-    pool_nonlinearity: Optional[str],
+    pool_params: Optional[dict],
     activation_checkpoint: Optional[bool],
     dataset_name: Optional[str],
     model_variant: Optional[str],
@@ -29,6 +30,9 @@ def build_cli_job(
     allow_duplicate_seeds: bool,
     split_train: Optional[float],
     split_val: Optional[float],
+    input_type: Optional[str] = None,
+    compression_mode: Optional[str] = None,
+    target_retention: Optional[float] = None,
 ) -> ExperimentJob:
     """Apply CLI overrides to TOML defaults, then construct validated benchmark values."""
     if "model" not in model_config:
@@ -42,16 +46,25 @@ def build_cli_job(
     training_section = dict(training_config["training"])
     split_section = dict(training_section.get("split", {}))
 
+    compression = dict(training_config.get("compression", {}))
+    if compression_mode is not None:
+        compression["mode"] = compression_mode
+        if compression_mode == "native":
+            compression.pop("target_retention", None)
+    if target_retention is not None:
+        compression["target_retention"] = target_retention
+
     experiment = ExperimentConfig(
         dataset=dataset_name or "PROTEINS",
+        compression=CompressionControl(**compression),
+        input_type=ConnectivityType(input_type if input_type is not None else training_config.get("input_type", "binary")),
         pool=PoolConfig(
             name=pool or "nopool",
-            ratio=float(pool_ratio if pool_ratio is not None else 0.5),
-            nonlinearity=pool_nonlinearity or "tanh",
+            params=pool_params if pool_params is not None else {"ratio": 0.5},
         ),
         model=ModelConfig.from_mapping(model_section),
         training=TrainingConfig(
-            runs=int(training_section["runs"]),
+            num_runs=int(training_section["num_runs"]),
             lr=float(training_section["lr"]),
             batch_size=int(training_section["batch_size"]),
             patience=int(training_section["patience"]),

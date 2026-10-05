@@ -14,6 +14,7 @@ from gplab.benchmark.config import ModelConfig
 from gplab.layers.pool import POOLING_PROFILES, validate_pooling_output
 from gplab.layers.pool import PoolingOutput as ExportedPoolingOutput
 from gplab.layers.pool.profiles import PoolingProfile
+from gplab.layers.pool.sparse_pool import SparsePooling
 from gplab.layers.pool.tgp_connect import SelectionConnect
 from gplab.model import GraphClassifier
 
@@ -25,6 +26,26 @@ class PoolingIntegrationTests(unittest.TestCase):
                           batch=torch.zeros(3, dtype=torch.long))
         self.config = ModelConfig(2, "relu", 0., "GCN", "GCN", (2,), (4, 2), "plain")
 
+    def test_sparse_pool_preserves_affine_scores_and_weighted_induced_graph(self):
+        pool = SparsePooling(1, ratio=.6, nonlinearity="identity")
+        with torch.no_grad():
+            pool.selector.linear.weight.fill_(2)
+            pool.selector.linear.bias.fill_(1)
+        x = torch.tensor([[1.], [3.], [2.], [4.], [1.], [5.]], requires_grad=True)
+        batch = torch.tensor([0, 0, 0, 1, 1, 1])
+        edges = torch.tensor([[0, 1, 2, 1, 3, 5, 4], [1, 2, 1, 1, 5, 3, 5]])
+        weights = torch.tensor([.1, .2, .3, .4, .5, .6, .7])
+        output = pool(x=x, adj=edges, batch=batch, edge_weight=weights)
+        # The custom affine score includes bias and has no projection normalization.
+        torch.testing.assert_close(output.x, torch.tensor([[21.], [10.], [55.], [36.]]))
+        torch.testing.assert_close(output.batch, torch.tensor([0, 0, 1, 1]))
+        torch.testing.assert_close(output.edge_index, torch.tensor([[0, 1, 0, 3, 2], [1, 0, 0, 2, 3]]))
+        torch.testing.assert_close(output.edge_weight, weights[[1, 2, 3, 4, 5]])
+        self.assertEqual(output.so.num_supernodes, 4)
+        output.x.sum().backward()
+        self.assertIsNotNone(pool.selector.linear.weight.grad)
+        self.assertIsNotNone(pool.selector.linear.bias.grad)
+
     def test_builtin_outputs_meet_classifier_boundary(self):
         self.assertIs(ExportedPoolingOutput, PoolingOutput)
         for name in POOLING_PROFILES:
@@ -34,22 +55,21 @@ class PoolingIntegrationTests(unittest.TestCase):
                 self.assertIs(type(output), PoolingOutput)
                 validate_pooling_output(output, name)
 
-    def test_dense_loss_dictionary_preserves_original_weights(self):
-        # Treat backend results as given; test only GPLab's loss coefficients.
-        for name, function, expected in (
-            ("diffpool", "dense_diff_pool", {"link": .2, "entropy": .4}),
-            ("mincutpool", "dense_mincut_pool", {"mincut": 1., "orthogonality": 4.}),
-        ):
-            with self.subTest(pool=name):
-                pool = POOLING_PROFILES[name].build(in_channels=2, ratio=.7,
-                                                   avg_node_num=3, nonlinearity="tanh")
-                backend_output = (torch.ones(1, 2, 2), torch.ones(1, 2, 2),
-                                  torch.tensor(2.), torch.tensor(4.))
-                with patch(f"gplab.layers.pool.dense_pool_adapter.{function}", return_value=backend_output):
-                    output = pool(x=self.graph.x, adj=self.graph.edge_index, batch=self.graph.batch)
-                self.assertEqual(output.loss.keys(), expected.keys())
-                for key in expected:
-                    torch.testing.assert_close(output.loss[key], torch.tensor(expected[key]))
+    def test_dense_profiles_configure_native_backend_semantics(self):
+        from tgp.poolers import DiffPool, MinCutPooling
+        diff = POOLING_PROFILES["diffpool"].build(in_channels=2, k=2)
+        cut = POOLING_PROFILES["mincutpool"].build(in_channels=2, k=2)
+        dense = POOLING_PROFILES["densepool"].build(in_channels=2, k=2)
+        self.assertIsInstance(diff, DiffPool)
+        self.assertIsInstance(cut, MinCutPooling)
+        self.assertEqual((diff.link_loss_coeff, diff.ent_loss_coeff), (.1, .1))
+        self.assertEqual((cut.cut_loss_coeff, cut.ortho_loss_coeff), (.5, 1.))
+        self.assertTrue(diff.normalize_loss)
+        self.assertFalse(diff.connector.degree_norm)
+        self.assertFalse(diff.connector.remove_self_loops)
+        self.assertTrue(cut.connector.degree_norm)
+        self.assertTrue(cut.connector.remove_self_loops)
+        self.assertIsNone(dense.compute_loss(None, None, None))
 
     def test_classifier_aggregates_loss_terms_with_checkpointing(self):
         class LossFixture(torch.nn.Module):
@@ -66,7 +86,7 @@ class PoolingIntegrationTests(unittest.TestCase):
 
         for checkpoint in (False, True):
             with self.subTest(checkpoint=checkpoint):
-                profile = PoolingProfile(lambda *args: LossFixture(), POOLING_PROFILES["nopool"].signatures)
+                profile = PoolingProfile(lambda *args, **kwargs: LossFixture(), POOLING_PROFILES["nopool"].signatures)
                 with patch("gplab.model.classifier.load_pooling_profile", return_value=profile):
                     model = GraphClassifier(2, 2, self.config, "custom", activation_checkpoint=checkpoint)
                 logits, auxiliary_loss = model(self.graph)
@@ -96,7 +116,7 @@ class PoolingIntegrationTests(unittest.TestCase):
             self.assertIsInstance(topk.connector, SelectionConnect)
             self.assertFalse(topk.connector.remove_self_loops)
         sag = POOLING_PROFILES["sagpool"].build(
-            in_channels=2, ratio=.7, avg_node_num=None, nonlinearity="relu",
+            in_channels=2, ratio=.7, avg_node_num=None,
         )
         self.assertIs(type(sag), SAGPooling)
         self.assertIsInstance(sag.gnn, GCNConv)
@@ -104,6 +124,28 @@ class PoolingIntegrationTests(unittest.TestCase):
         self.assertEqual(sag.selector.ratio, .7)
         self.assertIsInstance(sag.connector, SelectionConnect)
         self.assertFalse(sag.connector.remove_self_loops)
+
+    def test_native_parameters_reach_pool_constructors(self):
+        model = GraphClassifier(2, 2, self.config, "topkpool", pool_params={
+            "ratio": 2, "multiplier": 3.0, "nonlinearity": "relu", "remove_self_loops": True,
+        })
+        self.assertEqual(model.pool_module.multiplier, 3.0)
+        self.assertEqual(model.pool_module.selector.ratio, 2)
+        self.assertTrue(model.pool_module.connector.remove_self_loops)
+        sag = POOLING_PROFILES["sagpool"].build(in_channels=2, nonlinearity="relu", improved=True)
+        self.assertIsInstance(sag.selector.act, torch.nn.ReLU)
+        self.assertTrue(sag.gnn.improved)
+        for name in ("topkpool", "sagpool", "sparsepool", "densepool"):
+            with self.subTest(pool=name), self.assertRaises(TypeError):
+                POOLING_PROFILES[name].build(in_channels=2, unknown_option=True)
+
+    def test_dense_size_parameters_use_native_k_or_explicit_ratio(self):
+        profile = POOLING_PROFILES["densepool"]
+        for params, expected in (({"ratio": 0.5}, 5), ({"ratio": 1.0}, 1), ({"ratio": 3}, 3), ({"k": 4}, 4)):
+            pool = profile.build(in_channels=2, avg_node_num=10, **params)
+            self.assertEqual(pool.selector.k, expected)
+        with self.assertRaisesRegex(ValueError, "either ratio or k"):
+            profile.build(in_channels=2, avg_node_num=10, ratio=0.5, k=4)
 
     def test_connector_corrects_only_partial_selection_indices(self):
         # Mock the backend to isolate GPLab's source-to-cluster index correction.

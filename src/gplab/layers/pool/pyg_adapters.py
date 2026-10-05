@@ -7,9 +7,9 @@ from torch_geometric.nn.pool import ASAPooling
 
 class ASAPoolAdapter(torch.nn.Module):
     """Expose ASAP coarsened scalar weights, starting binary graphs with unit edge weights."""
-    def __init__(self, in_channels: int, ratio: float) -> None:
+    def __init__(self, in_channels: int, ratio: float = 0.5, **params) -> None:
         super().__init__()
-        self.asa_pool = ASAPooling(in_channels, ratio=ratio)
+        self.asa_pool = ASAPooling(in_channels, ratio=ratio, **params)
 
     def forward(
         self,

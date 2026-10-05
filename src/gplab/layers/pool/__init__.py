@@ -1,6 +1,6 @@
 from tgp.src import PoolingOutput
 
-from .dense_pool_adapter import DensePoolAdapter
+from .dense_pool import DensePooling, GraphDiffPool, MinCutPooling
 from .profiles import (
     POOLING_PROFILES,
     PoolingProfile,
@@ -14,7 +14,9 @@ from .validation import validate_pooling_output
 
 __all__ = [
     "ASAPoolAdapter",
-    "DensePoolAdapter",
+    "DensePooling",
+    "GraphDiffPool",
+    "MinCutPooling",
     "POOLING_PROFILES",
     "PoolingOutput",
     "PoolingProfile",

@@ -28,7 +28,7 @@ from gplab.train_loop import EvaluationResult
 def _config() -> ExperimentConfig:
     return ExperimentConfig.from_mapping({
         "dataset": "MUTAG",
-        "pool": {"name": "nopool", "ratio": 0.5, "nonlinearity": "tanh"},
+        "pool": {"name": "nopool", "params": {"ratio": 0.5}},
         "model": {
             "hidden_features": 4,
             "nonlinearity": "relu",
@@ -41,7 +41,7 @@ def _config() -> ExperimentConfig:
         },
         "training": {
             "activation_checkpoint": False,
-            "runs": 1,
+            "num_runs": 1,
             "lr": 0.001,
             "batch_size": 2,
             "patience": 0,
@@ -131,7 +131,7 @@ class ExperimentEvaluationTests(unittest.TestCase):
         ])
         dataset.connectivity_type = ConnectivityType.BINARY
         profile = PoolingProfile(
-            builder=lambda channels, _ratio, _avg_nodes, _act: _LazyPool(channels),
+            builder=lambda in_channels, avg_node_num=None, **params: _LazyPool(in_channels),
             signatures=(PoolingSignature(ConnectivityType.BINARY, ConnectivityType.BINARY),),
         )
         with (
@@ -149,7 +149,7 @@ class ExperimentEvaluationTests(unittest.TestCase):
                 training=replace(
                     experiment.training,
                     epochs=1,
-                    runs=2,
+                    num_runs=2,
                     seeds=replace(experiment.training.seeds, values=(1, 2)),
                 ),
             )
@@ -301,7 +301,7 @@ class ExperimentEvaluationTests(unittest.TestCase):
                     batch=torch.zeros(4, dtype=torch.long),
                 )
                 model = GraphClassifier(
-                    2, 2, _config().model, pool_method=pool_name, ratio=0.5, avg_node_num=4,
+                    2, 2, _config().model, pool_method=pool_name, pool_params={"ratio": 0.5}, avg_node_num=4,
                 ).eval()
                 with torch.no_grad(), capture_structural_statistics(model) as statistics:
                     model(graph)
@@ -328,7 +328,7 @@ class ExperimentEvaluationTests(unittest.TestCase):
                     n_classes=2,
                     config=_config().model,
                     pool_method=pool_name,
-                    ratio=0.5,
+                    pool_params={"ratio": 0.5},
                     avg_node_num=4,
                 )
                 model.eval()
@@ -388,7 +388,7 @@ class ExperimentEvaluationTests(unittest.TestCase):
         experiment = _config()
         experiment = replace(
             experiment,
-            training=replace(experiment.training, runs=2, seeds=replace(experiment.training.seeds, values=(7, 8))),
+            training=replace(experiment.training, num_runs=2, seeds=replace(experiment.training.seeds, values=(7, 8))),
         )
         record = build_record(
             experiment,

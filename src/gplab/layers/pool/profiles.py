@@ -5,26 +5,22 @@ from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from functools import partial
 from importlib import import_module
+from inspect import signature
 from types import MappingProxyType
 from typing import Optional
 
 import torch
 from tgp.poolers import SAGPooling, TopkPooling
-from torch.nn import Linear
-from torch_geometric.nn import DenseGCNConv, GCNConv
+from torch_geometric.nn import GCNConv, GraphConv
 
 from gplab.graph import ConnectivityType
 
-from .dense_pool_adapter import DensePoolAdapter
+from .dense_pool import DensePooling, GraphDiffPool, MinCutPooling
 from .pyg_adapters import ASAPoolAdapter
 from .sparse_pool import SparsePooling
 from .tgp_connect import SelectionConnect
 
-PoolBuilder = Callable[
-    [int, float, Optional[float], str | Callable],
-    Optional[torch.nn.Module],
-]
-
+PoolBuilder = Callable[..., Optional[torch.nn.Module]]
 
 @dataclass(frozen=True)
 class PoolingSignature:
@@ -61,11 +57,11 @@ class PoolingProfile:
         self,
         *,
         in_channels: int,
-        ratio: float,
-        avg_node_num: Optional[float],
-        nonlinearity: str | Callable,
+        avg_node_num: Optional[float] = None,
+        **params,
     ) -> Optional[torch.nn.Module]:
-        pool = self.builder(in_channels, ratio, avg_node_num, nonlinearity)
+        """Supply model/data context separately from method-specific constructor parameters."""
+        pool = self.builder(in_channels=in_channels, avg_node_num=avg_node_num, **params)
         if pool is not None and not isinstance(pool, torch.nn.Module):
             raise TypeError(
                 "PoolingProfile.builder must return torch.nn.Module or None, "
@@ -90,89 +86,84 @@ class PoolingProfile:
         )
 
 
-def _no_pool(
-    _in_channels: int,
-    _ratio: float,
-    _avg_node_num: Optional[float],
-    _nonlinearity: str | Callable,
-) -> None:
+def _no_pool(in_channels: int, avg_node_num=None, *, ratio=0.5) -> None:
+    """Identity baseline; accepts the generic ratio option without removing nodes."""
     return None
 
 
-def _topk_pool(
-    in_channels: int,
-    ratio: float,
-    _avg_node_num: Optional[float],
-    nonlinearity: str | Callable,
-) -> torch.nn.Module:
-    pool = TopkPooling(in_channels, ratio=ratio, nonlinearity=nonlinearity,
-                       remove_self_loops=False)
+def _selection_connector(pool, params):
+    """Apply the index-order correction while retaining requested TGP connector options."""
+    if params.get("degree_norm") or params.get("edge_weight_norm"):
+        raise ValueError("Connectivity normalization requires a separate pooling profile with weighted output signatures.")
+    pool.connector = SelectionConnect(
+        reduce_op=params.get("connect_red_op", "sum"),
+        remove_self_loops=params.get("remove_self_loops", False),
+        degree_norm=params.get("degree_norm", False),
+        edge_weight_norm=params.get("edge_weight_norm", False),
+    )
+    return pool
+
+
+def _topk_pool(in_channels: int, avg_node_num=None, **params) -> torch.nn.Module:
+    params = {"remove_self_loops": False, **params}
+    pool = TopkPooling(in_channels, **params)
     if in_channels == 1:
         # TGP treats one feature as a precomputed score by default. Standard
         # TopK still needs its normalized learned projection at width one.
         pool.selector.weight = torch.nn.Parameter(torch.empty(1, 1))
         pool.selector.reset_parameters()
-    pool.connector = SelectionConnect(remove_self_loops=False)
-    return pool
+    return _selection_connector(pool, params)
 
 
-def _sag_pool(
-    in_channels: int,
-    ratio: float,
-    _avg_node_num: Optional[float],
-    _nonlinearity: str | Callable,
-) -> torch.nn.Module:
-    # Fix the paper configuration instead of inheriting TGP's GraphConv default.
-    pool = SAGPooling(in_channels, ratio=ratio, GNN=GCNConv,
-                      nonlinearity="tanh", remove_self_loops=False)
-    pool.connector = SelectionConnect(remove_self_loops=False)
-    return pool
+def _sag_pool(in_channels: int, avg_node_num=None, *, GNN="GCNConv", **params) -> torch.nn.Module:
+    """Use GCNConv and tanh by default; resolve the JSON scorer name before construction."""
+    scorers = {"GCNConv": GCNConv, "GraphConv": GraphConv}
+    if GNN not in scorers:
+        raise ValueError(f"SAG GNN must be one of {tuple(scorers)}.")
+    # TGP silently filters unknown GNN kwargs; fail on misspelled configuration instead.
+    allowed = set(signature(SAGPooling).parameters) | set(signature(scorers[GNN]).parameters)
+    unknown = params.keys() - (allowed - {"kwargs"})
+    if unknown:
+        raise TypeError(f"Unknown SAG parameters: {', '.join(sorted(unknown))}")
+    params = {"nonlinearity": "tanh", "remove_self_loops": False, **params}
+    pool = SAGPooling(in_channels, GNN=scorers[GNN], **params)
+    return _selection_connector(pool, params)
 
 
-def _asap_pool(
-    in_channels: int,
-    ratio: float,
-    _avg_node_num: Optional[float],
-    _nonlinearity: str | Callable,
-) -> torch.nn.Module:
-    return ASAPoolAdapter(in_channels, ratio)
+def _asap_pool(in_channels: int, avg_node_num=None, **params) -> torch.nn.Module:
+    return ASAPoolAdapter(in_channels, **params)
 
 
-def _sparse_pool(
-    in_channels: int,
-    ratio: float,
-    _avg_node_num: Optional[float],
-    nonlinearity: str | Callable,
-) -> torch.nn.Module:
-    return SparsePooling(in_channels, ratio=ratio, act=nonlinearity)
+def _sparse_pool(in_channels: int, avg_node_num=None, **params) -> torch.nn.Module:
+    return SparsePooling(in_channels, **params)
 
 
-def _dense_pool(
-    pool_name: str,
-    graph_assignment: bool,
-    in_channels: int,
-    ratio: float,
-    avg_node_num: Optional[float],
-    _nonlinearity: str | Callable,
-) -> torch.nn.Module:
-    if avg_node_num is None:
-        raise ValueError("avg_node_num is required for dense pooling methods.")
-    # Dense methods share one assignment width based on dataset-average size,
-    # not a per-graph retained-node count. Even small graphs keep every slot.
-    cluster_count = max(1, int(avg_node_num * ratio))
-    assignment_layer = (
-        DenseGCNConv(in_channels, cluster_count)
-        if graph_assignment
-        else Linear(in_channels, cluster_count)
-    )
-    return DensePoolAdapter(assignment_layer, pool_name)
+def _dense_pool(pool_name: str, in_channels: int,
+                avg_node_num=None, *, ratio=None, k=None) -> torch.nn.Module:
+    """Accept native fixed k or convert a benchmark ratio using dataset-average size."""
+    if k is not None and ratio is not None:
+        raise ValueError("Specify either ratio or k for dense pooling, not both.")
+    if k is None:
+        if avg_node_num is None:
+            raise ValueError("avg_node_num is required when dense pooling uses ratio.")
+        ratio = 0.5 if ratio is None else ratio
+        k = int(ratio) if ratio >= 1 else max(1, int(avg_node_num * ratio))
+    if type(k) is not int or k <= 0:
+        raise ValueError("Dense pooling k must be a positive integer.")
+    if pool_name == "diffpool":
+        return GraphDiffPool(in_channels, k)
+    if pool_name == "mincutpool":
+        return MinCutPooling(in_channels, k, cut_loss_coeff=0.5, ortho_loss_coeff=1.0,
+                             adj_transpose=False, sparse_output=True)
+    return DensePooling(in_channels, k, remove_self_loops=False, degree_norm=False,
+                        adj_transpose=False, sparse_output=True)
 
 
 _BINARY = ConnectivityType.BINARY
 _SCALAR = ConnectivityType.SCALAR
 
-# Declared domains follow audits/COMPARABILITY_ALIGNMENT.md. Accepting an
-# edge_weight argument alone does not establish a method-faithful scalar domain.
+# Signatures describe method-valid transformations, not implementation executability.
+# Feature-only selection can be W -> W when retained edge weights are preserved.
 POOLING_PROFILES: Mapping[str, PoolingProfile] = MappingProxyType({
     "nopool": PoolingProfile(
         _no_pool,
@@ -183,7 +174,7 @@ POOLING_PROFILES: Mapping[str, PoolingProfile] = MappingProxyType({
     ),
     "topkpool": PoolingProfile(
         _topk_pool,
-        (PoolingSignature(_BINARY, _BINARY),),
+        (PoolingSignature(_BINARY, _BINARY), PoolingSignature(_SCALAR, _SCALAR)),
     ),
     "sagpool": PoolingProfile(
         _sag_pool,
@@ -195,18 +186,18 @@ POOLING_PROFILES: Mapping[str, PoolingProfile] = MappingProxyType({
     ),
     "sparsepool": PoolingProfile(
         _sparse_pool,
-        (PoolingSignature(_BINARY, _BINARY),),
+        (PoolingSignature(_BINARY, _BINARY), PoolingSignature(_SCALAR, _SCALAR)),
     ),
     "mincutpool": PoolingProfile(
-        partial(_dense_pool, "mincutpool", False),
+        partial(_dense_pool, "mincutpool"),
         (PoolingSignature(_BINARY, _SCALAR),),
     ),
     "diffpool": PoolingProfile(
-        partial(_dense_pool, "diffpool", True),
+        partial(_dense_pool, "diffpool"),
         (PoolingSignature(_BINARY, _SCALAR),),
     ),
     "densepool": PoolingProfile(
-        partial(_dense_pool, "densepool", False),
+        partial(_dense_pool, "densepool"),
         (PoolingSignature(_BINARY, _SCALAR),),
     ),
 })

@@ -61,7 +61,7 @@ def resolve_runs(
     if fixed_runs is None:
         policy = training.seeds
         seeds = resolve_seeds(
-            runs=training.runs, seed_mode=policy.mode, seed_base=policy.base,
+            num_runs=training.num_runs, seed_mode=policy.mode, seed_base=policy.base,
             seed_values=None if policy.values is None else list(policy.values),
             allow_duplicate_seeds=policy.allow_duplicates,
         )
@@ -72,8 +72,8 @@ def resolve_runs(
             )))
             for seed in seeds
         )
-    if len(fixed_runs) != training.runs:
-        raise ValueError("Run count must equal experiment.training.runs.")
+    if len(fixed_runs) != training.num_runs:
+        raise ValueError("Run count must equal experiment.training.num_runs.")
     for run in fixed_runs:
         if type(run.seed) is not int or not 0 <= run.seed < 2**32:
             raise ValueError("Run seed must be an integer in [0, 2**32).")

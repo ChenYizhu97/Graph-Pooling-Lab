@@ -14,6 +14,7 @@ from typer.testing import CliRunner
 
 from gplab.benchmark.identity import compute_comparison_group_key
 from gplab.cli import query, replay, run_train_job, train_cli
+from gplab.data.profiles import DatasetProfile
 from gplab.experiment.query import QuerySpec, build_benchmark_report
 from gplab.experiment.record import summarize_record
 from gplab.graph import ConnectivityType
@@ -25,8 +26,8 @@ from gplab.jobs.job import ExperimentJob
 class CliContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.job = {"experiment": {"dataset": "MUTAG", "pool": {"name": "nopool", "ratio": 0.5},
-                           "training": {"runs": 1, "epochs": 1, "patience": 0}}}
+        cls.job = {"experiment": {"dataset": "MUTAG", "pool": {"name": "nopool", "params": {"ratio": 0.5}},
+                           "training": {"num_runs": 1, "epochs": 1, "patience": 0}}}
         dataset = InMemoryDataset()
         dataset.data, dataset.slices = dataset.collate([
             Data(x=torch.ones(3, 2), edge_index=torch.tensor([[0, 1], [1, 0]]),
@@ -47,12 +48,12 @@ class CliContractTests(unittest.TestCase):
 
     def test_job_error_phase_and_field(self):
         invalid = copy.deepcopy(self.job)
-        invalid["experiment"]["pool"]["ratio"] = True
+        invalid["experiment"]["pool"]["params"]["ratio"] = True
         result = self.runner.invoke(run_train_job.app, ["--job-json", json.dumps(invalid)])
         payload = json.loads(result.stdout)
         self.assertEqual(result.exit_code, 1)
         self.assertEqual(payload["kind"], "job_error")
-        self.assertEqual(payload["error"]["field"], "experiment.pool.ratio")
+        self.assertEqual(payload["error"]["field"], "experiment.pool.params.ratio")
         with patch("gplab.cli.run_train_job.execute_job", side_effect=RuntimeError("failed")):
             result = self.runner.invoke(run_train_job.app, ["--job-json", json.dumps(self.job)])
         payload = json.loads(result.stdout)
@@ -72,6 +73,33 @@ class CliContractTests(unittest.TestCase):
             with self.subTest(field=field), self.assertRaises(ValueError) as caught:
                 parse_job(job)
             self.assertTrue(caught.exception.field.startswith(f"experiment.{section}.{field}"))
+
+    def test_pool_params_round_trip_and_cli_forwarding(self):
+        params = {"ratio": 3, "multiplier": 2.0, "nonlinearity": "relu"}
+        job = copy.deepcopy(self.job)
+        job["experiment"]["pool"] = {"name": "topkpool", "params": params}
+        parsed = parse_job(job)
+        self.assertEqual(parsed.experiment.pool.params, params)
+        self.assertEqual(parse_job(parsed.to_mapping()), parsed)
+        params["ratio"] = 2
+        self.assertEqual(parsed.experiment.pool.params["ratio"], 3)
+        with patch("gplab.cli.train_cli.execute_job", return_value={"ok": True}) as execute:
+            result = self.runner.invoke(train_cli.app, [
+                "--pool", "topkpool", "--pool-params", json.dumps(params), "--output-format", "json",
+            ])
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(execute.call_args.args[0].experiment.pool.params, params)
+
+    def test_pool_params_validation_and_old_fields_are_rejected(self):
+        for pool in ({"name": "topkpool", "ratio": 0.5},
+                     {"name": "topkpool", "nonlinearity": "relu"},
+                     {"name": "topkpool", "params": []},
+                     {"name": "topkpool", "params": {"ratio": 1.5}},
+                     {"name": "topkpool", "params": {"in_channels": 99}}):
+            job = copy.deepcopy(self.job)
+            job["experiment"]["pool"] = pool
+            with self.subTest(pool=pool), self.assertRaises(ValueError):
+                parse_job(job)
 
     def test_job_stdout_is_one_response(self):
         def execute(request, **kwargs):
@@ -147,6 +175,9 @@ class CliContractTests(unittest.TestCase):
         record = copy.deepcopy(self.record)
         expected = compute_comparison_group_key(record)
         record["experiment"]["pool"]["name"] = "topkpool"
+        record["experiment"]["pool"]["params"]["nonlinearity"] = "sigmoid"
+        record["experiment"]["pool"]["params"]["multiplier"] = 2.0
+        record["experiment"]["pool"]["params"]["ratio"] = 0.25
         record["experiment"]["training"]["seeds"] = {"mode": "list"}
         record["experiment"]["training"]["activation_checkpoint"] = True
         self.assertEqual(compute_comparison_group_key(record), expected)
@@ -154,15 +185,52 @@ class CliContractTests(unittest.TestCase):
         split["train"][0], split["test"][0] = split["test"][0], split["train"][0]
         self.assertNotEqual(compute_comparison_group_key(record), expected)
 
+    def test_comparison_groups_distinguish_input_type_but_not_pool_activation(self):
+        other = copy.deepcopy(self.record)
+        other["experiment"]["pool"]["params"]["nonlinearity"] = "sigmoid"
+        report = build_benchmark_report([self.record, other], QuerySpec(str(self.log)))
+        self.assertEqual(len(report["groups"]), 1)
+        self.assertNotIn("pool_nonlinearity", report["groups"][0]["comparison"])
+        other["experiment"]["input_type"] = "scalar"
+        report = build_benchmark_report([self.record, other], QuerySpec(str(self.log)))
+        self.assertEqual(len(report["groups"]), 2)
+        self.assertEqual({group["comparison"]["input_type"] for group in report["groups"]}, {"binary", "scalar"})
+
+    def test_input_type_json_validation(self):
+        self.assertEqual(parse_job(self.job).experiment.input_type, ConnectivityType.BINARY)
+        for value in ("scalar", "unknown", True, None):
+            job = copy.deepcopy(self.job)
+            job["experiment"]["input_type"] = value
+            with self.subTest(value=value), self.assertRaises(ValueError) as caught:
+                parse_job(job)
+            self.assertEqual(caught.exception.field, "experiment.input_type")
+
+    def test_input_type_cli_overrides_experiment_toml(self):
+        config = self.log.parent / "experiment.toml"
+        config.write_text(
+            'input_type="scalar"\n[training]\nnum_runs=1\nlr=0.001\nbatch_size=8\npatience=0\nepochs=1\n'
+            '[training.split]\ntrain=0.8\nval=0.1\n', encoding="utf-8",
+        )
+        profile = DatasetProfile(lambda: None, ConnectivityType.SCALAR)
+        for flags, expected in (([], ConnectivityType.SCALAR), (["--input-type", "binary"], ConnectivityType.BINARY)):
+            with self.subTest(flags=flags), patch("gplab.data.profiles.DATASET_PROFILES", {"weighted": profile}), patch(
+                "gplab.cli.train_cli.execute_job", return_value={"ok": True},
+            ) as execute:
+                result = self.runner.invoke(train_cli.app, [
+                    "--dataset", "weighted", "--experiment-config", str(config), "--output-format", "json", *flags,
+                ])
+                self.assertEqual(result.exit_code, 0, result.output)
+                self.assertEqual(execute.call_args.args[0].experiment.input_type, expected)
+
     def test_replay_json_rejects_invalid_index_types_and_unknown_fields(self):
         exported = ExperimentJob.from_record(self.record).to_mapping()
-        for change, field in (("boolean_index", "runs[0].split.train[]"),
-                              ("unknown_field", "runs[0]")):
+        for change, field in (("boolean_index", "fixed_runs[0].split.train[]"),
+                              ("unknown_field", "fixed_runs[0]")):
             job = copy.deepcopy(exported)
             if change == "boolean_index":
-                job["runs"][0]["split"]["train"][0] = True
+                job["fixed_runs"][0]["split"]["train"][0] = True
             else:
-                job["runs"][0]["unused"] = 1
+                job["fixed_runs"][0]["unused"] = 1
             with self.subTest(change=change), self.assertRaises(ValueError) as caught:
                 parse_job(job)
             self.assertEqual(caught.exception.field, field)
@@ -177,6 +245,8 @@ class CliContractTests(unittest.TestCase):
         })
         self.assertFalse(self.record["experiment"]["training"]["activation_checkpoint"])
         summary = summarize_record(self.record)
+        self.assertEqual(summary["num_runs"], len(self.record["result"]["runs"]))
+        self.assertNotIn("runs", summary)
         self.assertIn("comparison_group_key", summary)
         report = build_benchmark_report([self.record], QuerySpec(str(self.log)))
         self.assertEqual(report["groups"][0]["comparison_group_key"], summary["comparison_group_key"])
@@ -200,7 +270,7 @@ class CliContractTests(unittest.TestCase):
     def test_checkpoint_cli_overrides_training_toml(self):
         config = self.log.parent / "experiment.toml"
         config.write_text(
-            '[training]\nruns=1\nlr=0.001\nbatch_size=8\npatience=0\nepochs=1\n'
+            '[training]\nnum_runs=1\nlr=0.001\nbatch_size=8\npatience=0\nepochs=1\n'
             'activation_checkpoint=true\n[training.split]\ntrain=0.8\nval=0.1\n',
             encoding="utf-8",
         )
